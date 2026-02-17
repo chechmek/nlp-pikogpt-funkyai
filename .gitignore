@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Mac os
+.DS_Store
+
+## local folders
+
+# dataset caching
+/data/
+
+# model checkpoints und runs
+/runs/
+
+# run evaluations und plots
+/plots/
