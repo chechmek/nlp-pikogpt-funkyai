@@ -1,7 +1,17 @@
 [project]
-name = "pikogpt-template"
+name = "nlp-pikogpt-funkyai"
 version = "0.1.0"
-description = "Add your description here"
+description = "PikoGPT - Building an LLM from scratch"
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = []
+requires-python = ">=3.10"
+dependencies = [
+    "datasets",
+    "langdetect",
+    "pandas",
+    "tqdm",
+    "matplotlib",
+    "jupyter",
+    "torch",
+    "transformers",
+    "huggingface-hub",
+]
