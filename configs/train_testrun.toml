@@ -1,41 +1,71 @@
 [experiment]
+# Human-readable run name used in output folder naming.
 name = "Test Run"
+# Free-form description stored in experiment artifacts.
 description = "Training stage with logging + JSONL metrics"
+# Global random seed for split/tokenization/training reproducibility.
 seed = 42
 
 [data]
+# Path to the preprocessed Hugging Face dataset on disk.
 input_dataset_path = "src/data/processed/openwebtext_clean"
+# Fraction of samples used for validation split.
 validation_split = 0.1
+# Seed used specifically for train/validation splitting.
 split_seed = 42
+# Optional cap on training documents before token packing.
 max_train_samples = 1000
+# Optional cap on validation documents before token packing.
 max_validation_samples = 200
 
 [tokenizer]
+# Tokenizer identifier from Hugging Face Hub.
 name = "gpt2"
+# Fixed sequence length used for packed training blocks.
 context_length = 128
+# Append EOS token between documents before packing.
 append_eos_token = true
 
 [model]
+# Token embedding / hidden dimension.
 n_embd = 256
+# Number of transformer encoder layers (decoder-only with causal mask).
 n_layer = 2
+# Number of attention heads.
 n_head = 4
+# Dropout probability used in transformer blocks.
 dropout = 0.1
+# LayerNorm epsilon for numerical stability.
 layer_norm_epsilon = 1e-5
 
 [training]
+# Device selection: auto, cpu, cuda, or mps.
 device = "auto"
+# Training batch size.
 batch_size = 8
+# Evaluation batch size.
 eval_batch_size = 8
+# AdamW learning rate.
 learning_rate = 0.0003
+# AdamW weight decay coefficient.
 weight_decay = 0.01
+# Number of epochs to run.
 num_epochs = 1
+# Hard stop for training steps (useful for test runs).
 max_train_steps = 100
+# Log train metrics every N steps.
 log_every_steps = 10
+# Run evaluation every N steps.
 eval_every_steps = 50
+# Gradient clipping max norm (set null to disable).
 gradient_clip_norm = 1.0
 
 [logging]
+# Base directory where run folders are created.
 base_dir = "runs"
+# Console/file logger level.
 level = "INFO"
+# JSONL file name for per-step training metrics.
 train_jsonl_name = "train_metrics.jsonl"
+# JSONL file name for evaluation and epoch metrics.
 eval_jsonl_name = "eval_metrics.jsonl"
