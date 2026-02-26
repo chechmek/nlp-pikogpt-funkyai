@@ -1,0 +1,41 @@
+[experiment]
+name = "Test Run"
+description = "Training stage with logging + JSONL metrics"
+seed = 42
+
+[data]
+input_dataset_path = "src/data/processed/openwebtext_clean"
+validation_split = 0.1
+split_seed = 42
+max_train_samples = 1000
+max_validation_samples = 200
+
+[tokenizer]
+name = "gpt2"
+context_length = 128
+append_eos_token = true
+
+[model]
+n_embd = 256
+n_layer = 2
+n_head = 4
+dropout = 0.1
+layer_norm_epsilon = 1e-5
+
+[training]
+device = "auto"
+batch_size = 8
+eval_batch_size = 8
+learning_rate = 0.0003
+weight_decay = 0.01
+num_epochs = 1
+max_train_steps = 100
+log_every_steps = 10
+eval_every_steps = 50
+gradient_clip_norm = 1.0
+
+[logging]
+base_dir = "runs"
+level = "INFO"
+train_jsonl_name = "train_metrics.jsonl"
+eval_jsonl_name = "eval_metrics.jsonl"
