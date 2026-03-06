@@ -68,6 +68,7 @@ runs/<experiment_name>_<timestamp>/
     experiment_config_resolved.json
     architecture_overview.md
     training_results.json
+    model_final.pt
     train_tokenized/
     validation_tokenized/
   logs/

@@ -19,7 +19,7 @@ class ExperimentConfig(BaseModel):
 
 
 class DataConfig(BaseModel):
-    input_dataset_path: str = "src/data/processed/openwebtext_clean"
+    input_dataset_path: str = "data/processed/openwebtext_clean"
     validation_split: float = Field(default=0.1, gt=0.0, lt=0.5)
     split_seed: int = 42
     max_train_samples: int | None = Field(default=None, ge=1)

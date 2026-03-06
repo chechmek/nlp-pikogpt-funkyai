@@ -193,7 +193,9 @@ class TrainStage:
             return results
 
         training_results = self._train_model(model, tokenized_train, tokenized_eval)
+        checkpoint_path = self._save_checkpoint(model=model, tokenizer=tokenizer)
         training_results["status"] = "completed"
+        training_results["checkpoint_path"] = str(checkpoint_path)
         training_results["duration_seconds"] = round(time.time() - started_at, 2)
 
         self._write_results(training_results)
@@ -251,8 +253,17 @@ class TrainStage:
         )
 
     def _load_raw_dataset(self) -> Dataset:
-        self.logger.info("Loading processed dataset from: %s", self.config.data.input_dataset_path)
-        dataset = load_from_disk(self.config.data.input_dataset_path)
+        dataset_path = Path(self.config.data.input_dataset_path)
+        self.logger.info("Loading processed dataset from: %s", dataset_path)
+
+        if not dataset_path.exists():
+            raise FileNotFoundError(
+                f"Processed dataset not found: {dataset_path}. "
+                "Run preprocess first, for example: "
+                "python main.py --stage preprocess --output-path data/processed/openwebtext_clean"
+            )
+
+        dataset = load_from_disk(str(dataset_path))
 
         if "text" not in dataset.column_names:
             raise ValueError(
@@ -610,6 +621,37 @@ class TrainStage:
         if not losses:
             return None
         return sum(losses) / len(losses)
+
+    def _save_checkpoint(self, model: CausalTransformerLM, tokenizer) -> Path:
+        checkpoint_path = self.artifacts_dir / "model_final.pt"
+        state_dict = {
+            key: tensor.detach().cpu()
+            for key, tensor in model.state_dict().items()
+        }
+        checkpoint_payload: dict[str, Any] = {
+            "format": "pikogpt_checkpoint_v1",
+            "created_at": utc_now_iso(),
+            "model": {
+                "vocab_size": model.vocab_size,
+                "max_seq_len": model.max_seq_len,
+                "n_embd": self.config.model.n_embd,
+                "n_layer": self.config.model.n_layer,
+                "n_head": self.config.model.n_head,
+                "dropout": self.config.model.dropout,
+                "layer_norm_epsilon": self.config.model.layer_norm_epsilon,
+            },
+            "tokenizer": {
+                "name": getattr(tokenizer, "name_or_path", self.config.tokenizer.name),
+                "context_length": self.config.tokenizer.context_length,
+                "append_eos_token": self.config.tokenizer.append_eos_token,
+                "eos_token_id": tokenizer.eos_token_id,
+                "pad_token_id": tokenizer.pad_token_id,
+            },
+            "state_dict": state_dict,
+        }
+        torch.save(checkpoint_payload, checkpoint_path)
+        self.logger.info("Saved model checkpoint to: %s", checkpoint_path)
+        return checkpoint_path
 
     def _write_results(self, results: dict[str, Any]) -> None:
         payload = dict(results)

@@ -84,8 +84,8 @@ nlp-pikogpt-funkyai/
 | Stage | Command | Status | Description |
 |-------|---------|--------|-------------|
 | `preprocess` | `python main.py --stage preprocess` | ✅ Implemented | Clean and filter OpenWebText |
-| `train` | `python main.py --stage train` | 🔲 TODO | Pretrain the language model |
-| `inference` | `python main.py --stage inference` | 🔲 TODO | Generate text from trained model |
+| `train` | `python main.py --stage train` | ✅ Implemented | Pretrain the language model |
+| `inference` | `python main.py --stage inference` | ✅ Implemented | Generate text from a trained checkpoint |
 
 ## Usage
 
@@ -102,18 +102,21 @@ python main.py --stage preprocess \
     --output-path "data/processed/my_dataset"
 ```
 
-### Training (Coming Soon)
+### Training
 ```bash
-python main.py --stage train --config configs/default.yaml
+python main.py --stage train --config configs/train_default.toml
 ```
 
-### Inference (Coming Soon)
+### Inference
 ```bash
 python main.py --stage inference \
-    --checkpoint checkpoints/model.pt \
-    --prompt "Once upon a time" \
-    --max-tokens 100 \
-    --temperature 0.8
+    --checkpoint runs/<run_name>/artifacts/model_final.pt \
+    --prompt "Question: ... Answer:" \
+    --max-tokens 1 \
+    --temperature 0 \
+    --device auto \
+    --leaderboard \
+    --seed 0
 ```
 
 ## EDA Findings
@@ -150,8 +153,3 @@ As per the PikoGPT Challenge rules:
 | Filipp   | TBD |
 | Roman    | TBD |
 | Arabella | TBD |
-
-
-## License
-
-This project is for educational purposes as part of the University of St. Gallen NLP course.

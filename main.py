@@ -7,10 +7,12 @@ Usage:
     python main.py --stage preprocess --num-samples 100000
     python main.py --stage train --config configs/train_default.toml
     python main.py --stage train --config configs/train_default.yaml --prepare-only
-    python main.py --stage inference --checkpoint model.pt --prompt "Hello"
+    python main.py --stage inference --checkpoint CKPT.pt --prompt "Question: ... Answer:" --max-tokens 1 --temperature 0 --device auto --leaderboard --seed 0
 """
 
 import argparse
+import os
+import sys
 
 
 def main():
@@ -39,7 +41,15 @@ def main():
         "--seed",
         type=int,
         default=42,
-        help="Random seed for reproducibility (default: 42)",
+        help="Random seed for preprocess and inference reproducibility (default: 42)",
+    )
+    parser.add_argument(
+        "--strict-test-data",
+        action="store_true",
+        help=(
+            "Preprocess only: fail if --test-data-path is missing. "
+            "By default, preprocess continues without leakage filtering."
+        ),
     )
     parser.add_argument(
         "--test-data-path",
@@ -117,12 +127,33 @@ def run_preprocessing(args):
     """Run the preprocessing stage."""
     from src.data.preprocessing import main as preprocess_main
 
+    warning_rule = "ignore:resource_tracker:UserWarning"
+    existing_rules = os.environ.get("PYTHONWARNINGS", "")
+    if warning_rule not in existing_rules:
+        if existing_rules:
+            os.environ["PYTHONWARNINGS"] = f"{existing_rules},{warning_rule}"
+        else:
+            os.environ["PYTHONWARNINGS"] = warning_rule
+
     preprocess_main(
         num_samples=args.num_samples,
         seed=args.seed,
         test_data_path=args.test_data_path,
         output_path=args.output_path,
+        strict_test_data=args.strict_test_data,
     )
+
+    # Work around occasional pyarrow streaming teardown hangs on process exit.
+    if __name__ == "__main__":
+        try:
+            from multiprocessing import resource_tracker
+
+            resource_tracker._resource_tracker._stop()
+        except Exception:
+            pass
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 def run_training(args):
@@ -137,8 +168,26 @@ def run_training(args):
 
 def run_inference(args):
     """Run the inference stage."""
-    print("Inference stage not yet implemented.")
-    print("This will be added in future weeks!")
+    from src.inference.stage import main as inference_main
+
+    if not args.checkpoint:
+        raise ValueError("--checkpoint is required for --stage inference")
+    if args.prompt is None:
+        raise ValueError("--prompt is required for --stage inference")
+    if args.max_tokens < 0:
+        raise ValueError("--max-tokens must be >= 0")
+    if args.temperature < 0:
+        raise ValueError("--temperature must be >= 0")
+
+    inference_main(
+        checkpoint_path=args.checkpoint,
+        prompt=args.prompt,
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        device=args.device,
+        leaderboard=args.leaderboard,
+        seed=args.seed,
+    )
 
 
 if __name__ == "__main__":

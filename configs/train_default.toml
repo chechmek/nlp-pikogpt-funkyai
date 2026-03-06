@@ -1,0 +1,41 @@
+[experiment]
+name = "default" # Run name prefix used in output folder names.
+description = "Default training stage config" # Free-form run description.
+seed = 42 # Global random seed for reproducibility.
+
+[data]
+input_dataset_path = "src/data/processed/openwebtext_clean" # Preprocessed HF dataset on disk.
+validation_split = 0.1 # Fraction reserved for validation.
+split_seed = 42 # Seed used for train/validation split.
+max_train_samples = 10000 # Optional cap on train documents before packing.
+max_validation_samples = 2000 # Optional cap on validation documents before packing.
+
+[tokenizer]
+name = "gpt2" # Hugging Face tokenizer identifier.
+context_length = 128 # Fixed token block size for training sequences.
+append_eos_token = true # Add EOS between documents before packing.
+
+[model]
+n_embd = 256 # Embedding and hidden size.
+n_layer = 4 # Number of transformer blocks.
+n_head = 4 # Number of attention heads.
+dropout = 0.1 # Dropout probability in model blocks.
+layer_norm_epsilon = 1e-5 # Numerical stability epsilon for LayerNorm.
+
+[training]
+device = "auto" # Device selection: auto, cpu, cuda, or mps.
+batch_size = 8 # Training batch size.
+eval_batch_size = 8 # Evaluation batch size.
+learning_rate = 0.0003 # AdamW learning rate.
+weight_decay = 0.01 # AdamW weight decay.
+num_epochs = 10 # Maximum number of epochs (high enough to reach max_train_steps cap).
+max_train_steps = 800 # Approx. ~2 minutes on M4 Air for this default setup; adjust as needed.
+log_every_steps = 50 # Log train metrics every N steps.
+eval_every_steps = 100 # Run evaluation every N steps.
+gradient_clip_norm = 1.0 # Gradient clipping max norm (set null to disable).
+
+[logging]
+base_dir = "runs" # Base folder where run artifacts/logs are written.
+level = "INFO" # Console/file logger level.
+train_jsonl_name = "train_metrics.jsonl" # Per-step training metrics file.
+eval_jsonl_name = "eval_metrics.jsonl" # Evaluation and epoch metrics file.

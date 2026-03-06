@@ -26,8 +26,8 @@ PYTHONPATH=. .venv/bin/python main.py \
   --stage preprocess \
   --num-samples 100000 \
   --seed 42 \
-  --test-data-path src/data/raw/NLP26_OWT_eval/test \
-  --output-path src/data/processed/openwebtext_clean
+  --test-data-path data/raw/NLP26_OWT_eval/test \
+  --output-path data/processed/openwebtext_clean
 ```
 
 ## CLI Arguments

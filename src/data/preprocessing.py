@@ -53,15 +53,29 @@ class DataPreprocessor:
         sentences = re.split(r'(?<=[.!?])\s+', text)
         return [s.strip() for s in sentences if s.strip()]
     
-    def load_test_sets(self, test_data_path: str):
+    def load_test_sets(self, test_data_path: str, strict: bool = False):
         """
         Load test sets and create hashes of all sentences.
         These sentences must be excluded from training data.
         
         Args:
             test_data_path: Path to the NLP26 test dataset
+            strict: If True, raise when test dataset path is missing
         """
         print("Loading test sets for filtering...")
+        dataset_path = Path(test_data_path)
+        if not dataset_path.exists():
+            if strict:
+                raise FileNotFoundError(
+                    f"Test dataset path not found: {dataset_path}. "
+                    "Provide a valid path or disable strict mode."
+                )
+            print(
+                "  Warning: "
+                f"Test dataset path not found: {dataset_path}. "
+                "Continuing without leakage sentence filtering."
+            )
+            return
         
         # Load NLP26 OpenWebText test split
         print(f"  Loading NLP26 test split from: {test_data_path}")
@@ -274,6 +288,7 @@ class DataPreprocessor:
         num_samples: int,
         test_data_path: str,
         output_path: str,
+        strict_test_data: bool = False,
     ) -> Dataset:
         """
         Main preprocessing pipeline.
@@ -282,12 +297,13 @@ class DataPreprocessor:
             num_samples: Number of training samples to collect
             test_data_path: Path to NLP26 test dataset
             output_path: Where to save processed dataset
+            strict_test_data: If True, fail when test dataset path is missing
             
         Returns:
             Processed dataset
         """
         # Step 1: Load test sets for filtering
-        self.load_test_sets(test_data_path)
+        self.load_test_sets(test_data_path, strict=strict_test_data)
         
         # Step 2: Load OpenWebText with streaming
         print("Loading OpenWebText from HuggingFace (streaming)...")
@@ -306,20 +322,17 @@ class DataPreprocessor:
         # Estimate: ~5% will be filtered, so process 10% extra to be safe
         max_to_check = int(num_samples * 1.2)
         
-        for i, doc in enumerate(tqdm(dataset_stream, total=max_to_check, desc="Processing")):
-            # Stop if we have enough samples
-            if len(processed_samples) >= num_samples:
-                break
-            
-            # Stop if we've checked too many without getting enough
-            if i >= max_to_check:
-                print(f"\nWarning: Checked {max_to_check:,} docs but only got {len(processed_samples):,} samples")
-                break
-            
+        sampled_stream = dataset_stream.take(max_to_check)
+        for doc in tqdm(sampled_stream, total=max_to_check, desc="Processing"):
             # Process the document
             processed = self.process_document(doc)
             if processed is not None:
                 processed_samples.append(processed)
+
+        if len(processed_samples) < num_samples:
+            print(f"\nWarning: Checked {max_to_check:,} docs but only got {len(processed_samples):,} samples")
+        else:
+            processed_samples = processed_samples[:num_samples]
         
         # Step 4: Create dataset
         print(f"\nCreating dataset from {len(processed_samples):,} samples...")
@@ -353,7 +366,13 @@ class DataPreprocessor:
         print("=" * 60)
 
 
-def main(num_samples: int, seed: int, test_data_path: str, output_path: str):
+def main(
+    num_samples: int,
+    seed: int,
+    test_data_path: str,
+    output_path: str,
+    strict_test_data: bool = False,
+):
     """
     Entry point for preprocessing.
     
@@ -369,6 +388,7 @@ def main(num_samples: int, seed: int, test_data_path: str, output_path: str):
     print(f"Target samples:  {num_samples:,}")
     print(f"Random seed:     {seed}")
     print(f"Test data path:  {test_data_path}")
+    print(f"Strict test set: {strict_test_data}")
     print(f"Output path:     {output_path}")
     print("=" * 60 + "\n")
     
@@ -377,6 +397,7 @@ def main(num_samples: int, seed: int, test_data_path: str, output_path: str):
         num_samples=num_samples,
         test_data_path=test_data_path,
         output_path=output_path,
+        strict_test_data=strict_test_data,
     )
     
     print("\n✓ Preprocessing complete!")
@@ -410,6 +431,14 @@ if __name__ == "__main__":
         default="data/processed/openwebtext_clean",
         help="Where to save processed dataset"
     )
+    parser.add_argument(
+        "--strict-test-data",
+        action="store_true",
+        help=(
+            "Fail if --test-data-path is missing. "
+            "By default, preprocessing continues without leakage filtering."
+        ),
+    )
     
     args = parser.parse_args()
     
@@ -418,4 +447,5 @@ if __name__ == "__main__":
         seed=args.seed,
         test_data_path=args.test_data_path,
         output_path=args.output_path,
+        strict_test_data=args.strict_test_data,
     )
