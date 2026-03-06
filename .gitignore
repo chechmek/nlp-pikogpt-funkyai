@@ -16,6 +16,8 @@ wheels/
 
 # dataset caching
 /data/
+/src/data/raw/
+/src/data/processed/
 
 # model checkpoints und runs
 /runs/

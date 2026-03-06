@@ -14,4 +14,7 @@ dependencies = [
     "torch",
     "transformers",
     "huggingface-hub",
+    "pydantic>=2",
+    "pyyaml",
+    "tomli; python_version < '3.11'",
 ]

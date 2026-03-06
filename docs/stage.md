@@ -1,5 +1,6 @@
-# Stage
+# Stages
 
-## How to use this stage
+This project documents stages in separate files:
 
-## Implementation details
+- [Preprocessing Stage](./preprocessing.md)
+- [Train Stage](./train.md)
