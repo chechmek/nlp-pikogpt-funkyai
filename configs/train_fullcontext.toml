@@ -1,0 +1,46 @@
+# PikoGPT Full Context Configuration
+# ====================================
+# ~33M parameters - Maximizes context length (1024 tokens)
+# Best for tasks requiring long-range dependencies
+
+[experiment]
+name = "pikogpt_fullcontext"
+description = "Full context: 352 embd, 10 layers, 8 heads, 1024 context (~33M params)"
+seed = 42
+
+[data]
+input_dataset_path = "data/processed/openwebtext_clean"
+validation_split = 0.1
+split_seed = 42
+max_train_samples = 500000
+max_validation_samples = 10000
+
+[tokenizer]
+name = "gpt2"
+context_length = 1024             # Maximum allowed context
+append_eos_token = true
+
+[model]
+n_embd = 352                      # Balanced embedding size
+n_layer = 10                      # 10 transformer layers
+n_head = 8                        # 8 heads (head_dim = 44)
+dropout = 0.1
+layer_norm_epsilon = 1e-5
+
+[training]
+device = "auto"
+batch_size = 8                    # Smaller batch due to longer sequences
+eval_batch_size = 16
+learning_rate = 3e-4
+weight_decay = 0.01
+num_epochs = 3
+max_train_steps = 50000
+log_every_steps = 100
+eval_every_steps = 500
+gradient_clip_norm = 1.0
+
+[logging]
+base_dir = "runs"
+level = "INFO"
+train_jsonl_name = "train_metrics.jsonl"
+eval_jsonl_name = "eval_metrics.jsonl"

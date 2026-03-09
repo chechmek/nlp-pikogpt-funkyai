@@ -1,0 +1,46 @@
+# PikoGPT Medium Test Configuration
+# ===================================
+# ~30M parameters - For faster experimentation
+# Use this to test changes before full training
+
+[experiment]
+name = "pikogpt_medium_test"
+description = "Medium test: 384 embd, 8 layers, 6 heads, 256 context (~28M params)"
+seed = 42
+
+[data]
+input_dataset_path = "data/processed/openwebtext_clean"
+validation_split = 0.1
+split_seed = 42
+max_train_samples = 50000         # Smaller dataset for quick tests
+max_validation_samples = 5000
+
+[tokenizer]
+name = "gpt2"
+context_length = 256              # Shorter context for faster training
+append_eos_token = true
+
+[model]
+n_embd = 384
+n_layer = 8                       # Fewer layers for faster iteration
+n_head = 6                        # head_dim = 64
+dropout = 0.1
+layer_norm_epsilon = 1e-5
+
+[training]
+device = "auto"
+batch_size = 32                   # Larger batch for shorter sequences
+eval_batch_size = 64
+learning_rate = 3e-4
+weight_decay = 0.01
+num_epochs = 2
+max_train_steps = 5000            # Quick test run
+log_every_steps = 50
+eval_every_steps = 250
+gradient_clip_norm = 1.0
+
+[logging]
+base_dir = "runs"
+level = "INFO"
+train_jsonl_name = "train_metrics.jsonl"
+eval_jsonl_name = "eval_metrics.jsonl"

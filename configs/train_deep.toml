@@ -1,0 +1,46 @@
+# PikoGPT Deep Model Configuration
+# ==================================
+# ~34M parameters - Emphasizes depth over width
+# Good for learning complex patterns
+
+[experiment]
+name = "pikogpt_deep"
+description = "Deep model: 320 embd, 14 layers, 8 heads, 512 context (~34M params)"
+seed = 42
+
+[data]
+input_dataset_path = "data/processed/openwebtext_clean"
+validation_split = 0.1
+split_seed = 42
+max_train_samples = 500000
+max_validation_samples = 10000
+
+[tokenizer]
+name = "gpt2"
+context_length = 512
+append_eos_token = true
+
+[model]
+n_embd = 320                      # Smaller embedding
+n_layer = 14                      # More layers for depth
+n_head = 8                        # 8 heads (head_dim = 40)
+dropout = 0.1
+layer_norm_epsilon = 1e-5
+
+[training]
+device = "auto"
+batch_size = 16
+eval_batch_size = 32
+learning_rate = 3e-4
+weight_decay = 0.01
+num_epochs = 3
+max_train_steps = 50000
+log_every_steps = 100
+eval_every_steps = 500
+gradient_clip_norm = 1.0
+
+[logging]
+base_dir = "runs"
+level = "INFO"
+train_jsonl_name = "train_metrics.jsonl"
+eval_jsonl_name = "eval_metrics.jsonl"
