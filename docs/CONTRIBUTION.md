@@ -20,6 +20,8 @@ This document outlines team roles, responsibilities, and workflow for the PikoGP
 - [ ] Benchmark implementation (Week 6-7)
 - [ ] First leaderboard submission (Week 7)
 - [ ] Results analysis notebook (Week 8)
+- [ ] Poster draft (Week 10)
+- [ ] Final poster (Week 11)
 - [ ] Final evaluation report (Week 11)
 
 ---
@@ -73,6 +75,8 @@ This document outlines team roles, responsibilities, and workflow for the PikoGP
 - [ ] Hyperparameter tuning (Week 7)
 - [ ] Ablation study (Week 8)
 - [ ] Final model selection (Week 9)
+- [ ] Poster draft (Week 10)
+- [ ] Final poster (Week 11)
 - [ ] Architecture section for report (Week 12)
 
 ---
