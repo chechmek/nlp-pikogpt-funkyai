@@ -64,18 +64,31 @@ This will:
 ## Project Structure
 ```
 nlp-pikogpt-funkyai/
+├── configs/
+│   ├── train_default.toml        # Small model for testing (16M params)
+│   ├── train_large.toml          # Primary config (37M params) ⭐
+│   ├── train_deep.toml           # Deeper model variant (34M params)
+│   └── train_fullcontext.toml    # Max context length (33M params)
 ├── notebooks/
 │   └── 01_EDA.ipynb              # Exploratory Data Analysis
 ├── src/
 │   ├── __init__.py
-│   └── data/
+│   ├── data/
+│   │   ├── __init__.py
+│   │   └── preprocessing.py      # Data preprocessing pipeline
+│   ├── training/
+│   │   ├── __init__.py
+│   │   ├── config.py             # Pydantic config models
+│   │   ├── stage.py              # Training loop
+│   │   └── utils.py              # LR scheduling, gradient monitoring
+│   └── inference/
 │       ├── __init__.py
-│       └── preprocessing.py       # Data preprocessing pipeline
-├── data/                          # Not tracked in git (see .gitignore)
-│   ├── raw/                       # Downloaded test data
-│   └── processed/                 # Cleaned training data
-├── main.py                        # Main entry point
-├── pyproject.toml                 # Project dependencies
+│       └── stage.py              # Text generation pipeline
+├── runs/                         # Training run outputs (not tracked)
+├── data/                         # Datasets (not tracked)
+├── main.py                       # CLI entry point
+├── pyproject.toml                # Project dependencies
+├── CONTRIBUTING.md               # Team workflow & responsibilities
 └── README.md
 ```
 
@@ -86,6 +99,8 @@ nlp-pikogpt-funkyai/
 | `preprocess` | `python main.py --stage preprocess` | ✅ Implemented | Clean and filter OpenWebText |
 | `train` | `python main.py --stage train` | ✅ Implemented | Pretrain the language model |
 | `inference` | `python main.py --stage inference` | ✅ Implemented | Generate text from a trained checkpoint |
+| `evaluate` | `python main.py --stage evaluate` | 🔲 Planned | Run benchmarks |
+| `chat` | `python main.py --stage chat` | 🔲 Planned | Interactive chat interface |
 
 ## Usage
 
@@ -104,14 +119,26 @@ python main.py --stage preprocess \
 
 ### Training
 ```bash
+# Quick test (small model, ~2 min on CPU)
 python main.py --stage train --config configs/train_default.toml
+ 
+# Large model (use on GPU)
+python main.py --stage train --config configs/train_large.toml
 ```
-
+ 
 ### Inference
 ```bash
+# Interactive mode
 python main.py --stage inference \
     --checkpoint runs/<run_name>/artifacts/model_final.pt \
-    --prompt "Question: ... Answer:" \
+    --prompt "The meaning of life is" \
+    --max-tokens 50 \
+    --temperature 0.7
+ 
+# Leaderboard mode (outputs only generated text)
+python main.py --stage inference \
+    --checkpoint runs/<run_name>/artifacts/model_final.pt \
+    --prompt "Question: What is the capital of France? Answer:" \
     --max-tokens 1 \
     --temperature 0 \
     --device auto \
@@ -144,12 +171,78 @@ As per the PikoGPT Challenge rules:
 - **Training data:** OpenWebText (provided subset)
 - **Compute budget:** 2x 24h on 8xV100
 
+## Model Architecture
+ 
+Our primary model (`train_large.toml`) uses a GPT-2 style decoder-only transformer:
+ 
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `n_embd` | 384 | Embedding dimension |
+| `n_layer` | 10 | Transformer blocks |
+| `n_head` | 6 | Attention heads |
+| `head_dim` | 64 | Per-head dimension |
+| `context_length` | 512 | Max sequence length |
+| `vocab_size` | 50,257 | GPT-2 tokenizer |
+| **Total params** | **~37M** | Within 40M budget |
+ 
+### Architecture Diagram
+```
+Input Token IDs
+       ↓
+┌──────────────────┐
+│ Token Embedding  │ (50,257 → 384)
+├──────────────────┤
+│ Position Embed   │ (512 → 384)
+├──────────────────┤
+│ Dropout (0.1)    │
+├──────────────────┤
+│                  │
+│ Transformer Block│ ×10
+│ ├─ LayerNorm     │
+│ ├─ Multi-Head    │
+│ │  Attention (6) │
+│ ├─ Residual +    │
+│ ├─ LayerNorm     │
+│ ├─ FFN (384→1536)│
+│ └─ Residual +    │
+│                  │
+├──────────────────┤
+│ Final LayerNorm  │
+├──────────────────┤
+│ Output Projection│ (384 → 50,257)
+└──────────────────┘
+       ↓
+Logits (next token probabilities)
+```
+ 
+## Training Features
+ 
+- **LR Schedule:** Linear warmup + cosine decay
+- **Optimizer:** AdamW with weight decay
+- **Gradient Clipping:** Max norm 1.0
+- **Logging:** JSONL metrics + console output
+- **Checkpointing:** Self-contained checkpoints (architecture + weights)
+
+## Project Timeline
+ 
+| Week | Phase | Status |
+|------|-------|--------|
+| 1-2 | Team formation, EDA | ✅ Complete |
+| 3-4 | Preprocessing, Training code | ✅ Complete |
+| 5 | Architecture configs, TA check-in | ✅ Complete |
+| 6-7 | GPU training, Benchmarks | 🔄 In Progress |
+| 8-9 | Post-training, Evaluation | 🔲 Planned |
+| 10-11 | Chat interface, Poster | 🔲 Planned |
+| 12 | Final submission | 🔲 Planned |
+ 
 ## Team
-
+ 
 **Startup Name:** FunkyAI
-
-| Member   | Role |
-|--------  |------|
-| Filipp   | TBD |
-| Roman    | TBD |
-| Arabella | TBD |
+ 
+| Member   | Role              | Focus Area |
+|----------|-------------------|------------|
+| Filipp   | Data Engineer     | Preprocessing, benchmarks, evaluation |
+| Roman    | Platform Engineer | Training code, inference, CLI |
+| Arabella | ML Engineer       | Architecture, configs, hyperparameters |
+ 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed responsibilities and workflow.
