@@ -128,71 +128,6 @@ test: Add unit tests for data preprocessing
 
 ---
 
-## Communication
-
-### Channels
-
-| Channel | Purpose |
-|---------|---------|
-| Teams/WhatsApp | Quick questions, daily updates |
-| GitHub Issues | Task tracking, bugs, feature requests |
-| GitHub PRs | Code review, technical discussion |
-| Shared Doc | Meeting notes, decisions log |
-
-
-
-## Task Tracking
-
-We use GitHub Issues to track work. Each issue should have:
-
-- **Title:** Clear, actionable description
-- **Assignee:** Team member responsible
-- **Labels:** `data`, `model`, `platform`, `docs`, `bug`
-- **Milestone:** Week number or deadline
-
-### Issue Template
-
-```markdown
-## Description
-Brief description of the task
-
-## Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-## Dependencies
-- Depends on #XX (if any)
-
-## Notes
-Any additional context
-```
-
----
-
-## Weekly Status Update Template
-
-Post in shared doc or Teams every Sunday:
-
-```markdown
-## Week N Status - [Your Name]
-
-### ✅ Completed
-- Task 1
-- Task 2
-
-### 🔄 In Progress
-- Task 3 (estimated completion: Day)
-
-### 🚧 Blocked
-- Issue description + what's needed
-
-### 📋 Next Week
-- Planned task 1
-- Planned task 2
-```
-
----
-
 ## Key Dates
 
 | Date | Milestone |
@@ -202,29 +137,6 @@ Post in shared doc or Teams every Sunday:
 | Week 9 | Chat interface working |
 | May 11 | Poster submission |
 | June 2 | Final submission (code + report) |
-
----
-
-## Code Standards
-
-### Python Style
-
-- Follow PEP 8
-- Use type hints for function signatures
-- Write docstrings for public functions
-- Max line length: 100 characters
-
-### Documentation
-
-- Update README when adding features
-- Add docstrings to new functions
-- Comment complex logic
-
-### Testing
-
-- Test new features locally before PR
-- Verify inference works with checkpoints
-- Check training runs for at least 100 steps
 
 ---
 
@@ -246,14 +158,6 @@ Clear ownership helps avoid conflicts:
 
 ---
 
-## Getting Help
-
-- **Stuck on code?** Post in team chat with specific question
-- **Need review?** Open a draft PR early for feedback
-- **Blocked by teammate?** Mention in daily check-in
-- **Course question?** Contact TAs via Teams
-
----
 
 ## Decision Log
 
