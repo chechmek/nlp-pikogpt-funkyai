@@ -4,7 +4,7 @@ description = "Default training stage config" # Free-form run description.
 seed = 42 # Global random seed for reproducibility.
 
 [data]
-input_dataset_path = "src/data/processed/openwebtext_clean" # Preprocessed HF dataset on disk.
+input_dataset_path = "data/processed/openwebtext_clean" # Preprocessed HF dataset on disk.
 validation_split = 0.1 # Fraction reserved for validation.
 split_seed = 42 # Seed used for train/validation split.
 max_train_samples = 10000 # Optional cap on train documents before packing.

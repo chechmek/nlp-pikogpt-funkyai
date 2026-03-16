@@ -54,9 +54,11 @@ class TrainingRuntimeConfig(BaseModel):
     batch_size: int = Field(default=8, ge=1)
     eval_batch_size: int = Field(default=8, ge=1)
     learning_rate: float = Field(default=3e-4, gt=0.0)
+    min_learning_rate: float = 1e-5
     weight_decay: float = Field(default=0.01, ge=0.0)
     num_epochs: int = Field(default=1, ge=1)
     max_train_steps: int | None = Field(default=200, ge=1)
+    warmup_steps: int = 0  
     log_every_steps: int = Field(default=10, ge=1)
     eval_every_steps: int = Field(default=50, ge=1)
     gradient_clip_norm: float | None = Field(default=1.0, gt=0.0)

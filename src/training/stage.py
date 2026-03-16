@@ -6,6 +6,8 @@ import logging
 import random
 import shutil
 import time
+import math
+from torch.optim.lr_scheduler import LambdaLR
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,15 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 from .config import TrainStageConfig, load_train_config, model_dump_compat
+
+# Import from the new utils file
+from .utils import (
+    get_cosine_schedule_with_warmup,
+    compute_gradient_norm,
+    print_model_summary,
+    print_training_config,
+    print_layer_shapes
+)
 
 
 class JsonlWriter:
@@ -462,6 +473,35 @@ class TrainStage:
             lr=self.config.training.learning_rate,
             weight_decay=self.config.training.weight_decay,
         )
+        
+                # Calculate total training steps
+        if self.config.training.max_train_steps is not None:
+            total_steps = self.config.training.max_train_steps
+        else:
+            steps_per_epoch = len(train_loader)
+            total_steps = steps_per_epoch * self.config.training.num_epochs
+
+        # Get warmup config (with fallback for backwards compatibility)
+        warmup_steps = getattr(self.config.training, 'warmup_steps', 0)
+        min_lr = getattr(self.config.training, 'min_learning_rate', 1e-5)
+        min_lr_ratio = min_lr / self.config.training.learning_rate
+
+        # Create scheduler with warmup + cosine decay
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer=optimizer,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            min_lr_ratio=min_lr_ratio,
+        )
+
+        # Print model and training summary
+        print_model_summary(model, self.config, self.logger)
+        print_training_config(self.config, total_steps, self.logger)
+
+        self.logger.info(f"Total training steps: {total_steps}")
+        self.logger.info(f"Warmup steps: {warmup_steps}")
+
+        
 
         global_step = 0
         best_eval_loss: float | None = None
@@ -484,6 +524,8 @@ class TrainStage:
                 if loss is None:
                     raise RuntimeError("Model returned no loss while labels were provided")
                 loss.backward()
+                
+                grad_norm = compute_gradient_norm(model)
 
                 if self.config.training.gradient_clip_norm is not None:
                     torch.nn.utils.clip_grad_norm_(
@@ -492,10 +534,13 @@ class TrainStage:
                     )
 
                 optimizer.step()
+                scheduler.step()
 
                 global_step += 1
                 loss_value = float(loss.detach().cpu().item())
                 step_losses.append(loss_value)
+                
+                current_lr = scheduler.get_last_lr()[0] 
 
                 self.train_jsonl.write(
                     {
@@ -504,6 +549,8 @@ class TrainStage:
                         "epoch": epoch,
                         "step": global_step,
                         "loss": loss_value,
+                        "lr": current_lr,           
+                        "grad_norm": grad_norm, 
                     }
                 )
 
@@ -513,6 +560,8 @@ class TrainStage:
                         epoch,
                         global_step,
                         loss_value,
+                        current_lr,      
+                        grad_norm,
                     )
 
                 if global_step % self.config.training.eval_every_steps == 0:

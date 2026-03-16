@@ -32,11 +32,13 @@ device = "auto"
 batch_size = 16                   # Adjust based on GPU memory
 eval_batch_size = 32
 learning_rate = 3e-4              # Standard for this model size
+min_learning_rate = 1e-5 
 weight_decay = 0.01
 num_epochs = 3
-max_train_steps = 50000           # Adjust based on available compute
-log_every_steps = 100
-eval_every_steps = 500
+max_train_steps = 50000       # Change from 50000 to 100 for quick test
+warmup_steps = 500
+log_every_steps = 100       # Change from 100 to 20
+eval_every_steps = 500       # Change from 500 to 50
 gradient_clip_norm = 1.0
 
 [logging]
