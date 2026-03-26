@@ -431,6 +431,66 @@ def format_step_log(
 
 
 # ============================================================
+# DISTRIBUTED DATA PARALLEL (DDP) UTILITIES
+# ============================================================
+
+def setup_distributed() -> tuple[int, int, int, torch.device]:
+    """
+    Initialize the distributed process group and return rank info + device.
+
+    Designed to be called once per GPU process when launched via ``torchrun``.
+    Falls back gracefully to single-GPU / CPU when ``torchrun`` is not used.
+
+    Returns:
+        (rank, world_size, local_rank, device)
+    """
+    import os
+    import torch.distributed as dist
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    use_cuda = torch.cuda.is_available()
+    backend = "nccl" if use_cuda else "gloo"
+
+    dist.init_process_group(backend=backend)
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+
+    if use_cuda:
+        device = torch.device(f"cuda:{local_rank}")
+        torch.cuda.set_device(local_rank)
+    else:
+        device = torch.device("cpu")
+
+    print(
+        f"[rank {rank}/{world_size}] local_rank={local_rank} device={device}",
+        flush=True,
+    )
+    return rank, world_size, local_rank, device
+
+
+def cleanup_distributed() -> None:
+    """Destroy the process group so repeated runs don't hang."""
+    import torch.distributed as dist
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def is_distributed() -> bool:
+    """Return True when running inside a distributed process group."""
+    import torch.distributed as dist
+    return dist.is_initialized() and dist.get_world_size() > 1
+
+
+def is_main_process() -> bool:
+    """Return True on rank-0 (or when not running distributed)."""
+    import torch.distributed as dist
+    if not dist.is_initialized():
+        return True
+    return dist.get_rank() == 0
+
+
+# ============================================================
 # EXAMPLE USAGE
 # ============================================================
 

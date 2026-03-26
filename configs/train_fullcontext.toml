@@ -31,6 +31,7 @@ layer_norm_epsilon = 1e-5
 device = "auto"
 batch_size = 8                    # Smaller batch due to longer sequences
 eval_batch_size = 16
+grad_accum_steps = 4              # More accumulation to compensate small batch (effective_batch = 8 × world_size × 4)
 learning_rate = 3e-4
 weight_decay = 0.01
 num_epochs = 3

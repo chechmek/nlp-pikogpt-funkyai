@@ -26,6 +26,7 @@ layer_norm_epsilon = 1e-5 # Numerical stability epsilon for LayerNorm.
 device = "auto" # Device selection: auto, cpu, cuda, or mps.
 batch_size = 8 # Training batch size.
 eval_batch_size = 8 # Evaluation batch size.
+grad_accum_steps = 1 # Gradient accumulation steps (effective_batch = batch_size × world_size × grad_accum_steps).
 learning_rate = 0.0003 # AdamW learning rate.
 weight_decay = 0.01 # AdamW weight decay.
 num_epochs = 10 # Maximum number of epochs (high enough to reach max_train_steps cap).

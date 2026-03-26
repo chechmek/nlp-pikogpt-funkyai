@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
 import shutil
 import time
@@ -13,10 +14,13 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.distributed as dist
 from datasets import Dataset, load_from_disk
 from torch import nn
 from torch.optim import AdamW
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoTokenizer
 
 from .config import TrainStageConfig, load_train_config, model_dump_compat
@@ -27,7 +31,11 @@ from .utils import (
     compute_gradient_norm,
     print_model_summary,
     print_training_config,
-    print_layer_shapes
+    print_layer_shapes,
+    setup_distributed,
+    cleanup_distributed,
+    is_distributed,
+    is_main_process,
 )
 
 
@@ -204,13 +212,17 @@ class TrainStage:
             return results
 
         training_results = self._train_model(model, tokenized_train, tokenized_eval)
-        checkpoint_path = self._save_checkpoint(model=model, tokenizer=tokenizer)
-        training_results["status"] = "completed"
-        training_results["checkpoint_path"] = str(checkpoint_path)
-        training_results["duration_seconds"] = round(time.time() - started_at, 2)
 
-        self._write_results(training_results)
-        self.logger.info("Training completed")
+        # Only rank 0 saves checkpoint and results
+        if is_main_process():
+            checkpoint_path = self._save_checkpoint(model=model, tokenizer=tokenizer)
+            training_results["status"] = "completed"
+            training_results["checkpoint_path"] = str(checkpoint_path)
+            training_results["duration_seconds"] = round(time.time() - started_at, 2)
+
+            self._write_results(training_results)
+            self.logger.info("Training completed")
+
         return training_results
 
     def _initialize(self) -> None:
@@ -449,18 +461,40 @@ class TrainStage:
         train_dataset: Dataset,
         eval_dataset: Dataset,
     ) -> dict[str, Any]:
-        device = resolve_device(self.config.training.device)
+        # ── device & DDP setup ──────────────────────────────────────────
+        use_ddp = dist.is_initialized() and dist.get_world_size() > 1
+
+        if use_ddp:
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
+            device = torch.device(f"cuda:{local_rank}")
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+        else:
+            device = resolve_device(self.config.training.device)
+            rank = 0
+            world_size = 1
+
         model.to(device)
 
-        self.logger.info("Using device: %s", device)
+        if use_ddp:
+            model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
+        self.logger.info("Using device: %s (DDP=%s, world_size=%s)", device, use_ddp, world_size)
+
+        # ── dataloaders ─────────────────────────────────────────────────
         train_torch = train_dataset.with_format("torch")
         eval_torch = eval_dataset.with_format("torch")
+
+        train_sampler = DistributedSampler(
+            train_torch, num_replicas=world_size, rank=rank, shuffle=True
+        ) if use_ddp else None
 
         train_loader = DataLoader(
             train_torch,
             batch_size=self.config.training.batch_size,
-            shuffle=True,
+            shuffle=(train_sampler is None),
+            sampler=train_sampler,
+            drop_last=True,
         )
         eval_loader = DataLoader(
             eval_torch,
@@ -468,25 +502,27 @@ class TrainStage:
             shuffle=False,
         )
 
+        # ── optimizer & scheduler ───────────────────────────────────────
+        raw_model = model.module if use_ddp else model
+
         optimizer = AdamW(
-            model.parameters(),
+            raw_model.parameters(),
             lr=self.config.training.learning_rate,
             weight_decay=self.config.training.weight_decay,
         )
-        
-                # Calculate total training steps
+
+        grad_accum_steps = self.config.training.grad_accum_steps
+
         if self.config.training.max_train_steps is not None:
             total_steps = self.config.training.max_train_steps
         else:
-            steps_per_epoch = len(train_loader)
+            steps_per_epoch = math.ceil(len(train_loader) / grad_accum_steps)
             total_steps = steps_per_epoch * self.config.training.num_epochs
 
-        # Get warmup config (with fallback for backwards compatibility)
         warmup_steps = getattr(self.config.training, 'warmup_steps', 0)
         min_lr = getattr(self.config.training, 'min_learning_rate', 1e-5)
         min_lr_ratio = min_lr / self.config.training.learning_rate
 
-        # Create scheduler with warmup + cosine decay
         scheduler = get_cosine_schedule_with_warmup(
             optimizer=optimizer,
             warmup_steps=warmup_steps,
@@ -494,106 +530,138 @@ class TrainStage:
             min_lr_ratio=min_lr_ratio,
         )
 
-        # Print model and training summary
-        print_model_summary(model, self.config, self.logger)
-        print_training_config(self.config, total_steps, self.logger)
+        # ── logging (only on rank 0) ───────────────────────────────────
+        if rank == 0:
+            print_model_summary(raw_model, self.config, self.logger)
+            print_training_config(self.config, total_steps, self.logger)
 
-        self.logger.info(f"Total training steps: {total_steps}")
-        self.logger.info(f"Warmup steps: {warmup_steps}")
+            eff_batch = self.config.training.batch_size * world_size * grad_accum_steps
+            self.logger.info(
+                "Effective batch size: %s (micro=%s × world=%s × accum=%s)",
+                eff_batch,
+                self.config.training.batch_size,
+                world_size,
+                grad_accum_steps,
+            )
+            self.logger.info("Total training steps (optimizer updates): %s", total_steps)
+            self.logger.info("Warmup steps: %s", warmup_steps)
 
-        
-
-        global_step = 0
+        # ── training loop ───────────────────────────────────────────────
+        global_step = 0          # counts optimizer updates
+        micro_step = 0           # counts forward/backward passes
         best_eval_loss: float | None = None
         epoch_results: list[dict[str, Any]] = []
         training_started = time.time()
-
         stop_training = False
+
         for epoch in range(1, self.config.training.num_epochs + 1):
+            if train_sampler is not None:
+                train_sampler.set_epoch(epoch)
+
             model.train()
             step_losses: list[float] = []
+            optimizer.zero_grad(set_to_none=True)
+            accum_loss = 0.0
 
-            for batch in train_loader:
-                optimizer.zero_grad(set_to_none=True)
-
+            for batch_idx, batch in enumerate(train_loader, start=1):
+                micro_step += 1
                 input_ids = batch["input_ids"].to(device)
                 labels = batch["labels"].to(device)
 
-                outputs = model(input_ids=input_ids, labels=labels)
-                loss = outputs["loss"]
-                if loss is None:
-                    raise RuntimeError("Model returned no loss while labels were provided")
-                loss.backward()
-                
-                grad_norm = compute_gradient_norm(model)
+                # decide whether this micro-step triggers a sync
+                is_sync_step = (
+                    batch_idx % grad_accum_steps == 0
+                ) or (batch_idx == len(train_loader))
 
-                if self.config.training.gradient_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(),
-                        max_norm=self.config.training.gradient_clip_norm,
-                    )
+                # forward + backward (skip DDP gradient sync on non-sync steps)
+                if use_ddp and not is_sync_step:
+                    with model.no_sync():
+                        outputs = model(input_ids=input_ids, labels=labels)
+                        loss = outputs["loss"]
+                        if loss is None:
+                            raise RuntimeError("Model returned no loss")
+                        (loss / grad_accum_steps).backward()
+                else:
+                    outputs = model(input_ids=input_ids, labels=labels)
+                    loss = outputs["loss"]
+                    if loss is None:
+                        raise RuntimeError("Model returned no loss")
+                    (loss / grad_accum_steps).backward()
 
-                optimizer.step()
-                scheduler.step()
+                accum_loss += loss.detach().item()
 
-                global_step += 1
-                loss_value = float(loss.detach().cpu().item())
-                step_losses.append(loss_value)
-                
-                current_lr = scheduler.get_last_lr()[0] 
+                # optimizer step on sync steps
+                if is_sync_step:
+                    grad_norm = compute_gradient_norm(raw_model)
 
-                self.train_jsonl.write(
-                    {
-                        "timestamp": utc_now_iso(),
-                        "event": "train_step",
-                        "epoch": epoch,
-                        "step": global_step,
-                        "loss": loss_value,
-                        "lr": current_lr,           
-                        "grad_norm": grad_norm, 
-                    }
-                )
+                    if self.config.training.gradient_clip_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            raw_model.parameters(),
+                            max_norm=self.config.training.gradient_clip_norm,
+                        )
 
-                if global_step % self.config.training.log_every_steps == 0:
-                    self.logger.info(
-                        "Epoch %s | Step %s | Train loss %.4f",
-                        epoch,
-                        global_step,
-                        loss_value,
-                        current_lr,      
-                        grad_norm,
-                    )
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad(set_to_none=True)
 
-                if global_step % self.config.training.eval_every_steps == 0:
-                    eval_loss = self._evaluate(model, eval_loader, device)
-                    self.eval_jsonl.write(
-                        {
+                    global_step += 1
+                    avg_loss = accum_loss / grad_accum_steps
+                    step_losses.append(avg_loss)
+                    current_lr = scheduler.get_last_lr()[0]
+
+                    if rank == 0:
+                        self.train_jsonl.write({
                             "timestamp": utc_now_iso(),
-                            "event": "eval_step",
+                            "event": "train_step",
                             "epoch": epoch,
                             "step": global_step,
-                            "eval_loss": eval_loss,
-                        }
-                    )
-                    self.logger.info(
-                        "Epoch %s | Step %s | Eval loss %s",
-                        epoch,
-                        global_step,
-                        f"{eval_loss:.4f}" if eval_loss is not None else "n/a",
-                    )
+                            "loss": avg_loss,
+                            "lr": current_lr,
+                            "grad_norm": grad_norm,
+                        })
 
-                    if eval_loss is not None and (
-                        best_eval_loss is None or eval_loss < best_eval_loss
+                        if global_step % self.config.training.log_every_steps == 0:
+                            self.logger.info(
+                                "Epoch %s | Step %s | Train loss %.4f | lr %.2e | grad %.4f",
+                                epoch,
+                                global_step,
+                                avg_loss,
+                                current_lr,
+                                grad_norm,
+                            )
+
+                    if global_step % self.config.training.eval_every_steps == 0:
+                        eval_loss = self._evaluate(model, eval_loader, device)
+                        if rank == 0:
+                            self.eval_jsonl.write({
+                                "timestamp": utc_now_iso(),
+                                "event": "eval_step",
+                                "epoch": epoch,
+                                "step": global_step,
+                                "eval_loss": eval_loss,
+                            })
+                            self.logger.info(
+                                "Epoch %s | Step %s | Eval loss %s",
+                                epoch,
+                                global_step,
+                                f"{eval_loss:.4f}" if eval_loss is not None else "n/a",
+                            )
+
+                        if eval_loss is not None and (
+                            best_eval_loss is None or eval_loss < best_eval_loss
+                        ):
+                            best_eval_loss = eval_loss
+
+                    if (
+                        self.config.training.max_train_steps is not None
+                        and global_step >= self.config.training.max_train_steps
                     ):
-                        best_eval_loss = eval_loss
+                        stop_training = True
+                        break
 
-                if (
-                    self.config.training.max_train_steps is not None
-                    and global_step >= self.config.training.max_train_steps
-                ):
-                    stop_training = True
-                    break
+                    accum_loss = 0.0
 
+            # ── end of epoch ────────────────────────────────────────────
             epoch_train_loss = sum(step_losses) / len(step_losses) if step_losses else None
             epoch_eval_loss = self._evaluate(model, eval_loader, device)
 
@@ -602,35 +670,34 @@ class TrainStage:
             ):
                 best_eval_loss = epoch_eval_loss
 
-            epoch_payload = {
-                "timestamp": utc_now_iso(),
-                "event": "epoch_end",
-                "epoch": epoch,
-                "step": global_step,
-                "train_loss": epoch_train_loss,
-                "eval_loss": epoch_eval_loss,
-            }
-            self.eval_jsonl.write(epoch_payload)
-
-            self.logger.info(
-                "Epoch %s complete | train_loss=%s | eval_loss=%s",
-                epoch,
-                f"{epoch_train_loss:.4f}" if epoch_train_loss is not None else "n/a",
-                f"{epoch_eval_loss:.4f}" if epoch_eval_loss is not None else "n/a",
-            )
-
-            epoch_results.append(
-                {
+            if rank == 0:
+                epoch_payload = {
+                    "timestamp": utc_now_iso(),
+                    "event": "epoch_end",
                     "epoch": epoch,
+                    "step": global_step,
                     "train_loss": epoch_train_loss,
                     "eval_loss": epoch_eval_loss,
                 }
-            )
+                self.eval_jsonl.write(epoch_payload)
+
+                self.logger.info(
+                    "Epoch %s complete | train_loss=%s | eval_loss=%s",
+                    epoch,
+                    f"{epoch_train_loss:.4f}" if epoch_train_loss is not None else "n/a",
+                    f"{epoch_eval_loss:.4f}" if epoch_eval_loss is not None else "n/a",
+                )
+
+            epoch_results.append({
+                "epoch": epoch,
+                "train_loss": epoch_train_loss,
+                "eval_loss": epoch_eval_loss,
+            })
 
             if stop_training:
                 break
 
-        total_params = sum(p.numel() for p in model.parameters())
+        total_params = sum(p.numel() for p in raw_model.parameters())
 
         return {
             "timestamp": utc_now_iso(),
@@ -643,6 +710,8 @@ class TrainStage:
             "training_seconds": round(time.time() - training_started, 2),
             "train_sequences": len(train_dataset),
             "validation_sequences": len(eval_dataset),
+            "world_size": world_size,
+            "grad_accum_steps": grad_accum_steps,
         }
 
     def _evaluate(
@@ -671,18 +740,19 @@ class TrainStage:
             return None
         return sum(losses) / len(losses)
 
-    def _save_checkpoint(self, model: CausalTransformerLM, tokenizer) -> Path:
+    def _save_checkpoint(self, model, tokenizer) -> Path:
+        raw_model = model.module if isinstance(model, DDP) else model
         checkpoint_path = self.artifacts_dir / "model_final.pt"
         state_dict = {
             key: tensor.detach().cpu()
-            for key, tensor in model.state_dict().items()
+            for key, tensor in raw_model.state_dict().items()
         }
         checkpoint_payload: dict[str, Any] = {
             "format": "pikogpt_checkpoint_v1",
             "created_at": utc_now_iso(),
             "model": {
-                "vocab_size": model.vocab_size,
-                "max_seq_len": model.max_seq_len,
+                "vocab_size": raw_model.vocab_size,
+                "max_seq_len": raw_model.max_seq_len,
                 "n_embd": self.config.model.n_embd,
                 "n_layer": self.config.model.n_layer,
                 "n_head": self.config.model.n_head,
@@ -714,8 +784,20 @@ class TrainStage:
 
 
 def main(config_path: str, prepare_only: bool = False) -> dict[str, Any]:
-    stage = TrainStage(config_path=config_path, prepare_only=prepare_only)
-    return stage.run()
+    # Detect whether torchrun launched us (sets RANK / LOCAL_RANK env vars).
+    use_ddp = "RANK" in os.environ and "LOCAL_RANK" in os.environ
+
+    if use_ddp:
+        rank, world_size, local_rank, device = setup_distributed()
+    else:
+        rank = 0
+
+    try:
+        stage = TrainStage(config_path=config_path, prepare_only=prepare_only)
+        return stage.run()
+    finally:
+        if use_ddp:
+            cleanup_distributed()
 
 
 if __name__ == "__main__":

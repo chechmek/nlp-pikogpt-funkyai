@@ -31,6 +31,7 @@ layer_norm_epsilon = 1e-5
 device = "auto"
 batch_size = 16                   # Adjust based on GPU memory
 eval_batch_size = 32
+grad_accum_steps = 2              # Gradient accumulation (effective_batch = 16 × world_size × 2)
 learning_rate = 3e-4              # Standard for this model size
 min_learning_rate = 1e-5 
 weight_decay = 0.01
