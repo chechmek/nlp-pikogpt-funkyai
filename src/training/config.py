@@ -63,6 +63,11 @@ class TrainingRuntimeConfig(BaseModel):
     log_every_steps: int = Field(default=10, ge=1)
     eval_every_steps: int = Field(default=50, ge=1)
     gradient_clip_norm: float | None = Field(default=1.0, gt=0.0)
+    compile_model: bool = True
+    compile_backend: str = "auto"
+    compile_mode: str | None = "default"
+    save_every_steps: int | None = Field(default=500, ge=1)
+    resume_from_checkpoint: str | None = None
 
 
 class LoggingConfig(BaseModel):

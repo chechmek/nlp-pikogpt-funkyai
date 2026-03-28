@@ -26,14 +26,26 @@ PYTHONPATH=. .venv/bin/python main.py \
   --stage preprocess \
   --num-samples 100000 \
   --seed 42 \
+  --source-dataset-path data/raw/openwebtext_local \
   --test-data-path data/raw/NLP26_OWT_eval/test \
   --output-path data/processed/openwebtext_clean
+```
+
+```bash
+# Local smoke dataset
+PYTHONPATH=. .venv/bin/python main.py \
+  --stage preprocess \
+  --num-samples 12 \
+  --source-dataset-path data/smoke/source_dataset \
+  --test-data-path data/smoke/test_dataset \
+  --output-path data/processed/openwebtext_smoke
 ```
 
 ## CLI Arguments
 
 - `--num-samples`: number of clean samples to keep.
 - `--seed`: random seed for reproducibility.
+- `--source-dataset-path`: local Hugging Face dataset on disk used as preprocessing input.
 - `--test-data-path`: path to NLP26 test split used for leakage filtering.
 - `--output-path`: destination folder for processed dataset.
 
@@ -48,4 +60,4 @@ At `--output-path`, Hugging Face dataset artifacts are written, typically:
 ## Notes
 
 - First run can take time because sentence hashes are built for all test documents.
-- Internet access is required to stream OpenWebText from Hugging Face.
+- The source dataset must already exist on disk in Hugging Face `Dataset.save_to_disk(...)` format.

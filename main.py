@@ -63,6 +63,12 @@ def main():
         default="data/processed/openwebtext_clean",
         help="Output path for processed data",
     )
+    parser.add_argument(
+        "--source-dataset-path",
+        type=str,
+        default=None,
+        help="Preprocess only: local Hugging Face dataset path for input documents",
+    )
 
     # Training arguments
     parser.add_argument(
@@ -75,6 +81,12 @@ def main():
         "--prepare-only",
         action="store_true",
         help="Train stage only: run tokenization/splitting/log setup, skip optimizer steps.",
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        default=None,
+        help="Train stage only: resume from a checkpoint path",
     )
 
     # Inference arguments (for later)
@@ -141,9 +153,10 @@ def run_preprocessing(args):
         test_data_path=args.test_data_path,
         output_path=args.output_path,
         strict_test_data=args.strict_test_data,
+        source_dataset_path=args.source_dataset_path,
     )
 
-    # Work around occasional pyarrow streaming teardown hangs on process exit.
+    # Work around occasional pyarrow teardown hangs on process exit.
     if __name__ == "__main__":
         try:
             from multiprocessing import resource_tracker
@@ -163,6 +176,7 @@ def run_training(args):
     train_main(
         config_path=args.config,
         prepare_only=args.prepare_only,
+        resume_from_checkpoint=args.resume_from,
     )
 
 
