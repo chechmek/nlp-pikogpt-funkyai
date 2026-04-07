@@ -30,13 +30,6 @@ This document outlines team roles, responsibilities, and workflow for the PikoGP
 
 **Focus:** Infrastructure and product experience
 
-**Completed Work:** ✅
-- Training pipeline (`src/training/stage.py`)
-- Inference pipeline (`src/inference/stage.py`)
-- Config system (`src/training/config.py`)
-- CLI entry point (`main.py`)
-- Checkpoint format design
-
 | Responsibility | Description | Key Files |
 |----------------|-------------|-----------|
 | Chat Interface | Build Gradio/Streamlit demo | `src/interface/chat.py` |
@@ -130,49 +123,6 @@ refactor: Simplify checkpoint loading
 test: Add unit tests for data preprocessing
 ```
 
----
-
-## Key Dates
-
-| Date | Milestone |
-|------|-----------|
-| Week 5 | TA Check-in ✅ |
-| Week 7 | First leaderboard submission |
-| Week 9 | Chat interface working |
-| May 11 | Poster submission |
-| June 2 | Final submission (code + report) |
-
----
-
-## File Ownership
-
-Clear ownership helps avoid conflicts:
-
-| Directory | Primary Owner | Reviewers |
-|-----------|---------------|-----------|
-| `src/data/` | Filipp | Arabella |
-| `src/evaluation/` | Filipp | Roman |
-| `src/training/` | Arabella | Roman |
-| `src/inference/` | Roman | Arabella |
-| `src/interface/` | Roman | Filipp |
-| `configs/` | Arabella | Roman |
-| `notebooks/` | Filipp | All |
-| `main.py` | Roman | All |
-| `README.md` | Roman | All |
-
----
-
-
-## Decision Log
-
-Track important decisions here:
-
-| Date | Decision | Rationale | Decided By |
-|------|----------|-----------|------------|
-| Week 3 | Use 37M param model | Best use of 40M budget | All |
-| Week 4 | 512 context length | Balance memory/capability | Arabella |
-| Week 5 | Add LR warmup | Improves training stability | Arabella |
-| | | | |
 
 ---
 
