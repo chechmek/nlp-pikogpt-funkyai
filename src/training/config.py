@@ -59,9 +59,15 @@ class TrainingRuntimeConfig(BaseModel):
     num_epochs: int = Field(default=1, ge=1)
     max_train_steps: int | None = Field(default=200, ge=1)
     warmup_steps: int = 0  
+    grad_accum_steps: int = Field(default=1, ge=1)
     log_every_steps: int = Field(default=10, ge=1)
     eval_every_steps: int = Field(default=50, ge=1)
     gradient_clip_norm: float | None = Field(default=1.0, gt=0.0)
+    compile_model: bool = True
+    compile_backend: str = "auto"
+    compile_mode: str | None = "default"
+    save_every_steps: int | None = Field(default=500, ge=1)
+    resume_from_checkpoint: str | None = None
 
 
 class LoggingConfig(BaseModel):

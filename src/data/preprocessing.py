@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from collections import Counter
 
-from datasets import load_dataset, load_from_disk, Dataset
+from datasets import load_from_disk, Dataset
 from langdetect import detect, LangDetectException
 from tqdm import tqdm
 
@@ -13,7 +13,7 @@ class DataPreprocessor:
     Preprocesses OpenWebText data for LLM training.
     
     Handles:
-    - Loading data from HuggingFace
+    - Loading data from a local dataset on disk
     - Filtering non-English content
     - Removing test set sentences (prevents data leakage)
     - Cleaning HTML, URLs, code, special characters
@@ -289,6 +289,7 @@ class DataPreprocessor:
         test_data_path: str,
         output_path: str,
         strict_test_data: bool = False,
+        source_dataset_path: str | None = None,
     ) -> Dataset:
         """
         Main preprocessing pipeline.
@@ -298,6 +299,7 @@ class DataPreprocessor:
             test_data_path: Path to NLP26 test dataset
             output_path: Where to save processed dataset
             strict_test_data: If True, fail when test dataset path is missing
+            source_dataset_path: Local dataset path for preprocessing input
             
         Returns:
             Processed dataset
@@ -305,13 +307,25 @@ class DataPreprocessor:
         # Step 1: Load test sets for filtering
         self.load_test_sets(test_data_path, strict=strict_test_data)
         
-        # Step 2: Load OpenWebText with streaming
-        print("Loading OpenWebText from HuggingFace (streaming)...")
-        dataset_stream = load_dataset(
-            "Skylion007/openwebtext",
-            split="train",
-            streaming=True
-        )
+        # Step 2: Load source documents from disk
+        if not source_dataset_path:
+            raise ValueError(
+                "source_dataset_path is required. "
+                "Preprocessing only supports local datasets on disk."
+            )
+
+        source_path = Path(source_dataset_path)
+        if not source_path.exists():
+            raise FileNotFoundError(f"Source dataset path not found: {source_path}")
+        print(f"Loading local source dataset from disk: {source_path}")
+        local_source = load_from_disk(str(source_path))
+        if "text" not in local_source.column_names:
+            raise ValueError(
+                f"Expected a 'text' column in source dataset. Found: {local_source.column_names}"
+            )
+        if len(local_source) == 0:
+            raise ValueError("Source dataset is empty")
+        local_source = local_source.shuffle(seed=self.seed)
         
         # Step 3: Process documents
         print(f"Processing documents (target: {num_samples:,} clean samples)...")
@@ -322,8 +336,10 @@ class DataPreprocessor:
         # Estimate: ~5% will be filtered, so process 10% extra to be safe
         max_to_check = int(num_samples * 1.2)
         
-        sampled_stream = dataset_stream.take(max_to_check)
-        for doc in tqdm(sampled_stream, total=max_to_check, desc="Processing"):
+        total_to_check = min(max_to_check, len(local_source))
+        sampled_docs = local_source.select(range(total_to_check))
+
+        for doc in tqdm(sampled_docs, total=total_to_check, desc="Processing"):
             # Process the document
             processed = self.process_document(doc)
             if processed is not None:
@@ -372,6 +388,7 @@ def main(
     test_data_path: str,
     output_path: str,
     strict_test_data: bool = False,
+    source_dataset_path: str | None = None,
 ):
     """
     Entry point for preprocessing.
@@ -389,6 +406,7 @@ def main(
     print(f"Random seed:     {seed}")
     print(f"Test data path:  {test_data_path}")
     print(f"Strict test set: {strict_test_data}")
+    print(f"Source path:     {source_dataset_path}")
     print(f"Output path:     {output_path}")
     print("=" * 60 + "\n")
     
@@ -398,6 +416,7 @@ def main(
         test_data_path=test_data_path,
         output_path=output_path,
         strict_test_data=strict_test_data,
+        source_dataset_path=source_dataset_path,
     )
     
     print("\n✓ Preprocessing complete!")
@@ -439,6 +458,12 @@ if __name__ == "__main__":
             "By default, preprocessing continues without leakage filtering."
         ),
     )
+    parser.add_argument(
+        "--source-dataset-path",
+        type=str,
+        default=None,
+        help="Local Hugging Face dataset path to preprocess",
+    )
     
     args = parser.parse_args()
     
@@ -448,4 +473,5 @@ if __name__ == "__main__":
         test_data_path=args.test_data_path,
         output_path=args.output_path,
         strict_test_data=args.strict_test_data,
+        source_dataset_path=args.source_dataset_path,
     )

@@ -28,15 +28,34 @@ From repository root:
 # Full training run
 PYTHONPATH=. .venv/bin/python main.py \
   --stage train \
-  --config configs/train_testrun.toml
+  --config configs/train_default.toml
 ```
 
 ```bash
 # Prepare-only mode (debug pipeline, no optimizer steps)
 PYTHONPATH=. .venv/bin/python main.py \
   --stage train \
-  --config configs/train_testrun.toml \
+  --config configs/train_default.toml \
   --prepare-only
+```
+
+```bash
+# Resume from a periodic checkpoint
+PYTHONPATH=. .venv/bin/python main.py \
+  --stage train \
+  --config configs/train_large.toml \
+  --resume-from runs/<run_name>/artifacts/checkpoints/step_005000.pt
+```
+
+```bash
+# Single-node distributed run
+PYTHONPATH=. .venv/bin/torchrun --standalone --nnodes=1 --nproc_per_node=8 \
+  main.py --stage train --config configs/train_large.toml
+```
+
+```bash
+# End-to-end pipeline (preprocess -> train -> inference)
+MODE=smoke scripts/full_training_run.sh
 ```
 
 ## Config
@@ -57,6 +76,13 @@ Main sections:
 - `training`: optimizer/training schedule.
 - `logging`: run directory and metric file names.
 
+Notable training options:
+
+- `training.compile_model`: enables `torch.compile`.
+- `training.compile_backend`: `auto` selects `inductor` on CUDA and `eager` elsewhere.
+- `training.save_every_steps`: writes resumable checkpoints under `artifacts/checkpoints/`.
+- `training.resume_from_checkpoint`: optional checkpoint path for resume.
+
 ## Output Structure
 
 Each run creates:
@@ -69,10 +95,11 @@ runs/<experiment_name>_<timestamp>/
     architecture_overview.md
     training_results.json
     model_final.pt
+    checkpoints/
     train_tokenized/
     validation_tokenized/
   logs/
-    debug.log
+    debug_rank0.log
     train_metrics.jsonl
     eval_metrics.jsonl
 ```

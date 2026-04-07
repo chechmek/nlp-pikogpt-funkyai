@@ -107,12 +107,15 @@ nlp-pikogpt-funkyai/
 ### Preprocessing
 ```bash
 # Basic usage (100K samples)
-python main.py --stage preprocess --num-samples 100000
+python main.py --stage preprocess \
+    --num-samples 100000 \
+    --source-dataset-path "data/raw/openwebtext_local"
 
 # Custom configuration
 python main.py --stage preprocess \
     --num-samples 50000 \
     --seed 123 \
+    --source-dataset-path "data/raw/openwebtext_local" \
     --test-data-path "data/raw/NLP26_OWT_eval/test" \
     --output-path "data/processed/my_dataset"
 ```
@@ -124,6 +127,24 @@ python main.py --stage train --config configs/train_default.toml
  
 # Large model (use on GPU)
 python main.py --stage train --config configs/train_large.toml
+
+# 8-GPU single-node DDP
+torchrun --standalone --nnodes=1 --nproc_per_node=8 \
+    main.py --stage train --config configs/train_large.toml
+
+# Full local pipeline on 8 GPUs (preprocess -> distributed train -> inference)
+SOURCE_DATASET_PATH="data/raw/openwebtext_local" \
+NPROC_PER_NODE=8 \
+CONFIG=configs/train_large.toml \
+scripts/full_training_run.sh
+
+# Resume from a periodic checkpoint
+python main.py --stage train \
+    --config configs/train_large.toml \
+    --resume-from runs/<run_name>/artifacts/checkpoints/step_005000.pt
+
+# End-to-end smoke pipeline
+MODE=smoke scripts/full_training_run.sh
 ```
  
 ### Inference

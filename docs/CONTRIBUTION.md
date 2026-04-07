@@ -3,7 +3,7 @@
 This document outlines team roles, responsibilities, and workflow for the PikoGPT project.
 
 ## Team Roles
-
+                    
 ### Filipp - Data Engineer 🗂️
 
 **Focus:** Data pipeline and model evaluation
