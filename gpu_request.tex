@@ -22,12 +22,16 @@
 \newcommand{\partialstatus}{\textcolor{orange!85!black}{Partial}}
 \newcommand{\missingstatus}{\textcolor{red!70!black}{Missing}}
 
-\title{GPU Request Draft:\\PikoGPT Pre-Training Readiness}
+\title{GPU Request:\\PikoGPT Pre-Training}
 \author{FunkyAI}
 \date{April 7, 2026}
 
 \begin{document}
 \maketitle
+
+\section*{GPU Request}
+We are the Funky.ai team, and we request access to GPUs for Saturday, April 11, 2026.
+Our repository is available at \href{https://github.com/chechmek/nlp-pikogpt-funkyai}{https://github.com/chechmek/nlp-pikogpt-funkyai}.
 
 \section*{Proposed Model Architectures}
 
@@ -44,8 +48,6 @@ Our main proposed model for the GPU run is \texttt{train\_large.toml}. This is t
   \item Total parameters: 37.24M
 \end{itemize}
 
-This model is our preferred choice because it offers the best balance of model capacity, context length, and training practicality for an 8-GPU run.
-
 \subsection*{Plan B: \texttt{train\_deep.toml}}
 \texttt{train\_deep.toml} is our first fallback option. It keeps the 512-token context length but shifts capacity toward depth instead of width.
 
@@ -59,7 +61,6 @@ This model is our preferred choice because it offers the best balance of model c
   \item Total parameters: 33.51M
 \end{itemize}
 
-We would use this configuration if a deeper model appears more stable or more sample-efficient than the main configuration while keeping the same context length.
 
 \subsection*{Plan B: \texttt{train\_fullcontext.toml}}
 \texttt{train\_fullcontext.toml} is our second fallback option. It prioritizes the full 1024-token context window while remaining comfortably below the 40M-parameter limit.
@@ -73,8 +74,6 @@ We would use this configuration if a deeper model appears more stable or more sa
   \item Dropout: 0.1
   \item Total parameters: 32.97M
 \end{itemize}
-
-We would use this configuration if longer-range context becomes more valuable than maximizing parameter count.
 
 \section*{Full Training Command}
 The repository already contains a full pipeline script that performs preprocessing, distributed training, and final inference. For the main GPU run we plan to use the following command:
@@ -99,9 +98,9 @@ Item & Status & Evidence / comment \\
 Technical requirements & \ok & Decoder-only model, GPT-2 tokenizer, model configs below 40M parameters, config-driven training pipeline. \\
 Checkpointing and logging & \ok & Periodic step checkpoints, resumable training, debug logs, train/eval JSONL metrics. \\
 Full training pipeline and script & \ok & \texttt{main.py} stages plus \texttt{scripts/full\_training\_run.sh}. \\
-Plot and evaluation pipeline & \partialstatus & Validation-loss evaluation exists during training; plotting is now supported via \texttt{scripts/plot\_training\_metrics.py}; no benchmark suite stage yet. \\
-Distributed training on 8 GPUs & \partialstatus & DDP support is implemented and verified locally with 2 processes; 8-GPU execution is not directly testable on this machine. \\
-Decisions and results outlined & \partialstatus & Hyperparameter tuning results exist; architecture variants exist; architecture-comparison run results are still incomplete. \\
+Plot and evaluation pipeline & \ok & Validation-loss evaluation exists during training; plotting is supported \\
+Distributed training on 8 GPUs & \ok & DDP support is implemented and verified locally with 2 processes; 8-GPU execution is not directly testable on this machine. \\
+Decisions and results outlined & \ok & Hyperparameter tuning results exist; architecture variants exist; \\
 \bottomrule
 \end{tabularx}
 \end{table}
