@@ -1,0 +1,126 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{float}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue
+}
+
+\newcommand{\ok}{\textcolor{green!50!black}{Implemented}}
+\newcommand{\partialstatus}{\textcolor{orange!85!black}{Partial}}
+\newcommand{\missingstatus}{\textcolor{red!70!black}{Missing}}
+
+\title{GPU Request Draft:\\PikoGPT Pre-Training Readiness}
+\author{FunkyAI}
+\date{April 7, 2026}
+
+\begin{document}
+\maketitle
+
+\section*{Proposed Model Architectures}
+
+\subsection*{Main Configuration: \texttt{train\_large.toml}}
+Our main proposed model for the GPU run is \texttt{train\_large.toml}. This is the strongest configuration currently defined in the repository while remaining within the 40M-parameter budget.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Architecture: decoder-only transformer
+  \item Embedding dimension: 384
+  \item Transformer layers: 10
+  \item Attention heads: 6
+  \item Context length: 512
+  \item Dropout: 0.1
+  \item Total parameters: 37.24M
+\end{itemize}
+
+This model is our preferred choice because it offers the best balance of model capacity, context length, and training practicality for an 8-GPU run.
+
+\subsection*{Plan B: \texttt{train\_deep.toml}}
+\texttt{train\_deep.toml} is our first fallback option. It keeps the 512-token context length but shifts capacity toward depth instead of width.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Architecture: decoder-only transformer
+  \item Embedding dimension: 320
+  \item Transformer layers: 14
+  \item Attention heads: 8
+  \item Context length: 512
+  \item Dropout: 0.1
+  \item Total parameters: 33.51M
+\end{itemize}
+
+We would use this configuration if a deeper model appears more stable or more sample-efficient than the main configuration while keeping the same context length.
+
+\subsection*{Plan B: \texttt{train\_fullcontext.toml}}
+\texttt{train\_fullcontext.toml} is our second fallback option. It prioritizes the full 1024-token context window while remaining comfortably below the 40M-parameter limit.
+
+\begin{itemize}[leftmargin=1.5em]
+  \item Architecture: decoder-only transformer
+  \item Embedding dimension: 352
+  \item Transformer layers: 10
+  \item Attention heads: 8
+  \item Context length: 1024
+  \item Dropout: 0.1
+  \item Total parameters: 32.97M
+\end{itemize}
+
+We would use this configuration if longer-range context becomes more valuable than maximizing parameter count.
+
+\section*{Full Training Command}
+The repository already contains a full pipeline script that performs preprocessing, distributed training, and final inference. For the main GPU run we plan to use the following command:
+
+\begin{verbatim}
+SOURCE_DATASET_PATH=data/raw/openwebtext_local \
+TEST_DATA_PATH=data/raw/NLP26_OWT_eval/test \
+NPROC_PER_NODE=8 \
+RUN_NAME=pikogpt_large_gpu_run \
+CONFIG=configs/train_large.toml \
+scripts/full_training_run.sh
+\end{verbatim}
+
+\section*{Checklist Status}
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{0.40\textwidth} >{\raggedright\arraybackslash}p{0.18\textwidth} X}
+\toprule
+Item & Status & Evidence / comment \\
+\midrule
+Technical requirements & \ok & Decoder-only model, GPT-2 tokenizer, model configs below 40M parameters, config-driven training pipeline. \\
+Checkpointing and logging & \ok & Periodic step checkpoints, resumable training, debug logs, train/eval JSONL metrics. \\
+Full training pipeline and script & \ok & \texttt{main.py} stages plus \texttt{scripts/full\_training\_run.sh}. \\
+Plot and evaluation pipeline & \partialstatus & Validation-loss evaluation exists during training; plotting is now supported via \texttt{scripts/plot\_training\_metrics.py}; no benchmark suite stage yet. \\
+Distributed training on 8 GPUs & \partialstatus & DDP support is implemented and verified locally with 2 processes; 8-GPU execution is not directly testable on this machine. \\
+Decisions and results outlined & \partialstatus & Hyperparameter tuning results exist; architecture variants exist; architecture-comparison run results are still incomplete. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section*{Smoke Results Evaluation}
+
+\subsection*{Smoke Run Overview}
+We ran smoke validations to confirm that the full infrastructure works before requesting large-scale GPU time. These smoke runs are not meant to demonstrate final model quality; they are infrastructure checks for preprocessing, training, checkpointing, evaluation logging, resume support, and distributed execution.
+
+
+\subsection*{Smoke Run Graphs}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.32\textwidth]{gradient_norm_curve.png}
+\includegraphics[width=0.32\textwidth]{learning_rate_curve.png}
+\includegraphics[width=0.32\textwidth]{loss_curve.png}
+\caption{Distributed smoke run diagnostics for test run: loss curve, learning-rate, and gradient norm. These plots were generated from the JSONL training logs.}
+\end{figure}
+
+\section*{Optuna Results Evaluation}
+
+\end{document}
