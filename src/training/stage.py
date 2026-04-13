@@ -291,10 +291,17 @@ class TrainStage:
         )
 
         # Run WikiText-103 benchmark evaluation
+        # Run final benchmark evaluations
         device, _ = self._resolve_training_device()
         model.to(device)
+
+        # WikiText-103 (external benchmark)
         wikitext_results = self._evaluate_wikitext(model, tokenizer, device)
         training_results.update(wikitext_results)
+
+        # OpenWebText Test Set (course leaderboard)
+        owt_test_results = self._evaluate_openwebtext_test(model, tokenizer, device)
+        training_results.update(owt_test_results)
 
         if is_main_process():
             checkpoint_path = self._save_checkpoint(
@@ -1223,6 +1230,126 @@ class TrainStage:
             )
 
         return {"wikitext_loss": avg_loss, "wikitext_perplexity": ppl}
+    
+    def _evaluate_openwebtext_test(
+        self,
+        model: nn.Module,
+        tokenizer,
+        device: torch.device,
+        test_data_path: str = "data/raw/NLP26_OWT_eval/test",
+    ) -> dict[str, float | None]:
+        """Evaluate perplexity on the official OpenWebText test set (course leaderboard)."""
+        self.logger.info("=" * 70)
+        self.logger.info(" OPENWEBTEXT TEST SET EVALUATION ")
+        self.logger.info("=" * 70)
+
+        test_path = Path(test_data_path)
+        if not test_path.exists():
+            self.logger.warning("Test data not found at %s", test_path)
+            self.logger.warning("Skipping OpenWebText test evaluation.")
+            self.logger.warning("Download from: https://drive.switch.ch/index.php/s/6TLGQFEIkAPJ72K")
+            return {"owt_test_loss": None, "owt_test_perplexity": None}
+
+        # Load test dataset
+        self.logger.info("Loading test set from: %s", test_path)
+        test_dataset = load_from_disk(str(test_path))
+        self.logger.info("Test set size: %s documents", f"{len(test_dataset):,}")
+
+        # Tokenize all test documents
+        block_size = self.config.tokenizer.context_length
+        eos_id = tokenizer.eos_token_id
+        all_tokens: list[int] = []
+
+        self.logger.info("Tokenizing test documents...")
+        for doc in test_dataset:
+            text = doc.get("text", "")
+            if text and text.strip():
+                encoded = tokenizer(text, add_special_tokens=False)["input_ids"]
+                all_tokens.extend(encoded)
+                if self.config.tokenizer.append_eos_token and eos_id is not None:
+                    all_tokens.append(eos_id)
+
+        self.logger.info("Total tokens in test set: %s", f"{len(all_tokens):,}")
+
+        # Pack into fixed-length sequences
+        usable = (len(all_tokens) // block_size) * block_size
+        if usable == 0:
+            self.logger.warning("OpenWebText test produced 0 sequences after tokenization")
+            return {"owt_test_loss": None, "owt_test_perplexity": None}
+
+        sequences = [
+            all_tokens[i : i + block_size]
+            for i in range(0, usable, block_size)
+        ]
+        self.logger.info("Packed into %s sequences of length %s", f"{len(sequences):,}", block_size)
+
+        # Create dataset and dataloader
+        input_ids_tensor = torch.tensor(sequences, dtype=torch.long)
+        labels_tensor = input_ids_tensor.clone()
+        test_torch_dataset = torch.utils.data.TensorDataset(input_ids_tensor, labels_tensor)
+
+        if self.use_ddp:
+            test_sampler = DistributedSampler(
+                test_torch_dataset, num_replicas=self.world_size, rank=self.rank, shuffle=False
+            )
+        else:
+            test_sampler = None
+
+        test_loader = DataLoader(
+            test_torch_dataset,
+            batch_size=self.config.training.eval_batch_size,
+            shuffle=False,
+            sampler=test_sampler,
+        )
+
+        # Evaluate
+        model.eval()
+        loss_sum = 0.0
+        batch_count = 0.0
+
+        self.logger.info("Running evaluation...")
+        with torch.no_grad():
+            for batch_input_ids, batch_labels in test_loader:
+                batch_input_ids = batch_input_ids.to(device)
+                batch_labels = batch_labels.to(device)
+                outputs = model(input_ids=batch_input_ids, labels=batch_labels)
+                loss = outputs["loss"]
+                if loss is not None:
+                    loss_sum += float(loss.detach().item())
+                    batch_count += 1.0
+
+        # Aggregate across GPUs if distributed
+        if self.use_ddp:
+            stats = torch.tensor([loss_sum, batch_count], dtype=torch.float64, device=device)
+            dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+            loss_sum = float(stats[0].item())
+            batch_count = float(stats[1].item())
+
+        model.train()
+
+        if batch_count == 0:
+            return {"owt_test_loss": None, "owt_test_perplexity": None}
+
+        avg_loss = loss_sum / batch_count
+        ppl = math.exp(avg_loss)
+
+        self.logger.info("=" * 70)
+        self.logger.info("  OpenWebText Test Loss:       %.4f", avg_loss)
+        self.logger.info("  OpenWebText Test Perplexity: %.2f", ppl)
+        self.logger.info("=" * 70)
+
+        if is_main_process():
+            self.eval_jsonl.write(
+                {
+                    "timestamp": utc_now_iso(),
+                    "event": "owt_test_eval",
+                    "owt_test_loss": avg_loss,
+                    "owt_test_perplexity": ppl,
+                    "total_sequences": len(sequences),
+                }
+            )
+
+        return {"owt_test_loss": avg_loss, "owt_test_perplexity": ppl}
 
     def _write_results(self, results: dict[str, Any]) -> None:
         payload = dict(results)
