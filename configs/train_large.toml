@@ -12,7 +12,7 @@ seed = 42
 input_dataset_path = "data/processed/openwebtext_clean"
 validation_split = 0.1
 split_seed = 42
-max_train_samples = 500000        # Use more data for larger model
+max_train_samples = 2000000       # 2M samples for 50K steps in 3 epochs
 max_validation_samples = 10000
 
 [tokenizer]
