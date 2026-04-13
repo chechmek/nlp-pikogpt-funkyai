@@ -1337,13 +1337,16 @@ class TrainStage:
         model.eval()
         loss_sum = 0.0
         batch_count = 0.0
+        use_amp = device.type == "cuda"
+        amp_dtype = torch.float16 if use_amp else torch.float32
 
         self.logger.info("Running evaluation...")
         with torch.no_grad():
             for batch_input_ids, batch_labels in test_loader:
                 batch_input_ids = batch_input_ids.to(device)
                 batch_labels = batch_labels.to(device)
-                outputs = model(input_ids=batch_input_ids, labels=batch_labels)
+                with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    outputs = model(input_ids=batch_input_ids, labels=batch_labels)
                 loss = outputs["loss"]
                 if loss is not None:
                     loss_sum += float(loss.detach().item())
@@ -1362,7 +1365,7 @@ class TrainStage:
             return {"owt_test_loss": None, "owt_test_perplexity": None}
 
         avg_loss = loss_sum / batch_count
-        ppl = math.exp(avg_loss)
+        ppl = safe_exp(avg_loss)
 
         self.logger.info("=" * 70)
         self.logger.info("  OpenWebText Test Loss:       %.4f", avg_loss)
