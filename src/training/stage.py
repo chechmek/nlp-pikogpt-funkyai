@@ -290,6 +290,12 @@ class TrainStage:
             checkpoint_payload=checkpoint_payload,
         )
 
+        # Run WikiText-103 benchmark evaluation
+        device, _ = self._resolve_training_device()
+        model.to(device)
+        wikitext_results = self._evaluate_wikitext(model, tokenizer, device)
+        training_results.update(wikitext_results)
+
         if is_main_process():
             checkpoint_path = self._save_checkpoint(
                 model=model,
@@ -938,6 +944,7 @@ class TrainStage:
                                 "batch_idx": batch_idx,
                                 "step": global_step,
                                 "loss": avg_loss,
+                                "perplexity": math.exp(avg_loss),
                                 "lr": current_lr,
                                 "grad_norm": grad_norm,
                             }
@@ -955,6 +962,7 @@ class TrainStage:
 
                     if global_step % self.config.training.eval_every_steps == 0:
                         eval_loss = self._evaluate(model, eval_loader, device)
+                        eval_ppl = math.exp(eval_loss) if eval_loss is not None else None
                         if is_main_process():
                             self.eval_jsonl.write(
                                 {
@@ -964,13 +972,15 @@ class TrainStage:
                                     "batch_idx": batch_idx,
                                     "step": global_step,
                                     "eval_loss": eval_loss,
+                                    "eval_perplexity": eval_ppl,
                                 }
                             )
                             self.logger.info(
-                                "Epoch %s | Step %s | Eval loss %s",
+                                "Epoch %s | Step %s | Eval loss %s | Eval PPL %s",
                                 epoch,
                                 global_step,
                                 f"{eval_loss:.4f}" if eval_loss is not None else "n/a",
+                                f"{eval_ppl:.2f}" if eval_ppl is not None else "n/a",
                             )
                         if eval_loss is not None and (
                             best_eval_loss is None or eval_loss < best_eval_loss
@@ -1021,10 +1031,15 @@ class TrainStage:
             ):
                 best_eval_loss = epoch_eval_loss
 
+            epoch_train_ppl = math.exp(epoch_train_loss) if epoch_train_loss is not None else None
+            epoch_eval_ppl = math.exp(epoch_eval_loss) if epoch_eval_loss is not None else None
+
             epoch_payload = {
                 "epoch": epoch,
                 "train_loss": epoch_train_loss,
+                "train_perplexity": epoch_train_ppl,
                 "eval_loss": epoch_eval_loss,
+                "eval_perplexity": epoch_eval_ppl,
             }
             epoch_results.append(epoch_payload)
 
@@ -1036,14 +1051,18 @@ class TrainStage:
                         "epoch": epoch,
                         "step": global_step,
                         "train_loss": epoch_train_loss,
+                        "train_perplexity": epoch_train_ppl,
                         "eval_loss": epoch_eval_loss,
+                        "eval_perplexity": epoch_eval_ppl,
                     }
                 )
                 self.logger.info(
-                    "Epoch %s complete | train_loss=%s | eval_loss=%s",
+                    "Epoch %s complete | train_loss=%s | train_ppl=%s | eval_loss=%s | eval_ppl=%s",
                     epoch,
                     f"{epoch_train_loss:.4f}" if epoch_train_loss is not None else "n/a",
+                    f"{epoch_train_ppl:.2f}" if epoch_train_ppl is not None else "n/a",
                     f"{epoch_eval_loss:.4f}" if epoch_eval_loss is not None else "n/a",
+                    f"{epoch_eval_ppl:.2f}" if epoch_eval_ppl is not None else "n/a",
                 )
 
             resume_batch_idx = 0
@@ -1103,6 +1122,107 @@ class TrainStage:
         if batch_count == 0:
             return None
         return loss_sum / batch_count
+
+    def _evaluate_wikitext(
+        self,
+        model: nn.Module,
+        tokenizer,
+        device: torch.device,
+    ) -> dict[str, float | None]:
+        """Evaluate perplexity on WikiText-103 test set (streamed from HuggingFace)."""
+        from datasets import load_dataset as hf_load_dataset
+
+        self.logger.info("Running WikiText-103 benchmark evaluation...")
+
+        try:
+            wikitext = hf_load_dataset("wikitext", "wikitext-103-raw-v1", split="test")
+        except Exception as e:
+            self.logger.warning("Could not load WikiText-103: %s", e)
+            return {"wikitext_loss": None, "wikitext_perplexity": None}
+
+        # Concatenate all non-empty paragraphs and tokenize
+        block_size = self.config.tokenizer.context_length
+        eos_id = tokenizer.eos_token_id
+        all_tokens: list[int] = []
+        for row in wikitext:
+            text = row.get("text", "")
+            if not text or not text.strip():
+                continue
+            encoded = tokenizer(text, add_special_tokens=False)["input_ids"]
+            all_tokens.extend(encoded)
+            if eos_id is not None:
+                all_tokens.append(eos_id)
+
+        # Pack into fixed-length sequences
+        usable = (len(all_tokens) // block_size) * block_size
+        if usable == 0:
+            self.logger.warning("WikiText-103 produced 0 sequences after tokenization")
+            return {"wikitext_loss": None, "wikitext_perplexity": None}
+
+        sequences = [
+            all_tokens[i : i + block_size]
+            for i in range(0, usable, block_size)
+        ]
+        self.logger.info("WikiText-103: %d sequences of length %d", len(sequences), block_size)
+
+        input_ids_tensor = torch.tensor(sequences, dtype=torch.long)
+        labels_tensor = input_ids_tensor.clone()
+        wiki_dataset = torch.utils.data.TensorDataset(input_ids_tensor, labels_tensor)
+
+        if self.use_ddp:
+            wiki_sampler = DistributedSampler(
+                wiki_dataset, num_replicas=self.world_size, rank=self.rank, shuffle=False
+            )
+        else:
+            wiki_sampler = None
+
+        wiki_loader = DataLoader(
+            wiki_dataset,
+            batch_size=self.config.training.eval_batch_size,
+            shuffle=False,
+            sampler=wiki_sampler,
+        )
+
+        model.eval()
+        loss_sum = 0.0
+        batch_count = 0.0
+
+        with torch.no_grad():
+            for batch_input_ids, batch_labels in wiki_loader:
+                batch_input_ids = batch_input_ids.to(device)
+                batch_labels = batch_labels.to(device)
+                outputs = model(input_ids=batch_input_ids, labels=batch_labels)
+                loss = outputs["loss"]
+                if loss is not None:
+                    loss_sum += float(loss.detach().item())
+                    batch_count += 1.0
+
+        if self.use_ddp:
+            stats = torch.tensor([loss_sum, batch_count], dtype=torch.float64, device=device)
+            dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+            loss_sum = float(stats[0].item())
+            batch_count = float(stats[1].item())
+
+        model.train()
+
+        if batch_count == 0:
+            return {"wikitext_loss": None, "wikitext_perplexity": None}
+
+        avg_loss = loss_sum / batch_count
+        ppl = math.exp(avg_loss)
+        self.logger.info("WikiText-103 | loss=%.4f | perplexity=%.2f", avg_loss, ppl)
+
+        if is_main_process():
+            self.eval_jsonl.write(
+                {
+                    "timestamp": utc_now_iso(),
+                    "event": "wikitext_eval",
+                    "wikitext_loss": avg_loss,
+                    "wikitext_perplexity": ppl,
+                }
+            )
+
+        return {"wikitext_loss": avg_loss, "wikitext_perplexity": ppl}
 
     def _write_results(self, results: dict[str, Any]) -> None:
         payload = dict(results)
