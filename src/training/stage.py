@@ -48,6 +48,14 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def safe_exp(x: float) -> float:
+    """Compute exp(x) without OverflowError; clamp to a large finite value."""
+    try:
+        return math.exp(x)
+    except OverflowError:
+        return float("inf")
+
+
 def get_rank() -> int:
     if dist.is_initialized():
         return dist.get_rank()
@@ -691,6 +699,10 @@ class TrainStage:
         if scheduler is not None:
             payload["scheduler_state_dict"] = scheduler.state_dict()
 
+        # Save GradScaler state if provided in training_state
+        if training_state is not None and "scaler_state_dict" in training_state:
+            payload["scaler_state_dict"] = training_state["scaler_state_dict"]
+
         return payload
 
     def _save_checkpoint(
@@ -780,6 +792,11 @@ class TrainStage:
         device, ddp_kwargs = self._resolve_training_device()
         base_model.to(device)
 
+        # AMP: enable mixed precision on CUDA for ~2x speedup
+        use_amp = device.type == "cuda"
+        amp_dtype = torch.float16 if use_amp else torch.float32
+        scaler = torch.amp.GradScaler(enabled=use_amp)
+
         optimizer = AdamW(
             base_model.parameters(),
             lr=self.config.training.learning_rate,
@@ -839,6 +856,8 @@ class TrainStage:
             optimizer.load_state_dict(checkpoint_payload["optimizer_state_dict"])
         if checkpoint_payload is not None and checkpoint_payload.get("scheduler_state_dict") is not None:
             scheduler.load_state_dict(checkpoint_payload["scheduler_state_dict"])
+        if checkpoint_payload is not None and checkpoint_payload.get("scaler_state_dict") is not None:
+            scaler.load_state_dict(checkpoint_payload["scaler_state_dict"])
 
         compiled_model, compile_details = self._compile_model(base_model, device)
         model = DDP(compiled_model, **ddp_kwargs) if self.use_ddp else compiled_model
@@ -855,6 +874,7 @@ class TrainStage:
                 grad_accum_steps,
             )
             self.logger.info("Using device: %s", device)
+            self.logger.info("Mixed precision (AMP): %s", "enabled (float16)" if use_amp else "disabled")
             self.logger.info("torch.compile details: %s", compile_details)
             if self.resume_checkpoint_path is not None:
                 self.logger.info(
@@ -909,21 +929,24 @@ class TrainStage:
 
                 if self.use_ddp and not is_sync_step:
                     with model.no_sync():
-                        outputs = model(input_ids=input_ids, labels=labels)
-                        loss = outputs["loss"]
+                        with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                            outputs = model(input_ids=input_ids, labels=labels)
+                            loss = outputs["loss"]
                         if loss is None:
                             raise RuntimeError("Model returned no loss")
-                        (loss / grad_accum_steps).backward()
+                        scaler.scale(loss / grad_accum_steps).backward()
                 else:
-                    outputs = model(input_ids=input_ids, labels=labels)
-                    loss = outputs["loss"]
+                    with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                        outputs = model(input_ids=input_ids, labels=labels)
+                        loss = outputs["loss"]
                     if loss is None:
                         raise RuntimeError("Model returned no loss")
-                    (loss / grad_accum_steps).backward()
+                    scaler.scale(loss / grad_accum_steps).backward()
 
                 accum_loss += float(loss.detach().item())
 
                 if is_sync_step:
+                    scaler.unscale_(optimizer)
                     grad_norm = compute_gradient_norm(base_model)
 
                     if self.config.training.gradient_clip_norm is not None:
@@ -932,7 +955,8 @@ class TrainStage:
                             max_norm=self.config.training.gradient_clip_norm,
                         )
 
-                    optimizer.step()
+                    scaler.step(optimizer)
+                    scaler.update()
                     scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
 
@@ -951,7 +975,7 @@ class TrainStage:
                                 "batch_idx": batch_idx,
                                 "step": global_step,
                                 "loss": avg_loss,
-                                "perplexity": math.exp(avg_loss),
+                                "perplexity": safe_exp(avg_loss),
                                 "lr": current_lr,
                                 "grad_norm": grad_norm,
                             }
@@ -969,7 +993,7 @@ class TrainStage:
 
                     if global_step % self.config.training.eval_every_steps == 0:
                         eval_loss = self._evaluate(model, eval_loader, device)
-                        eval_ppl = math.exp(eval_loss) if eval_loss is not None else None
+                        eval_ppl = safe_exp(eval_loss) if eval_loss is not None else None
                         if is_main_process():
                             self.eval_jsonl.write(
                                 {
@@ -1011,6 +1035,7 @@ class TrainStage:
                             "world_size": self.world_size,
                             "compile": compile_details,
                             "device": str(device),
+                            "scaler_state_dict": scaler.state_dict(),
                         }
                         self._save_step_checkpoint(
                             model=base_model,
@@ -1038,8 +1063,8 @@ class TrainStage:
             ):
                 best_eval_loss = epoch_eval_loss
 
-            epoch_train_ppl = math.exp(epoch_train_loss) if epoch_train_loss is not None else None
-            epoch_eval_ppl = math.exp(epoch_eval_loss) if epoch_eval_loss is not None else None
+            epoch_train_ppl = safe_exp(epoch_train_loss) if epoch_train_loss is not None else None
+            epoch_eval_ppl = safe_exp(epoch_eval_loss) if epoch_eval_loss is not None else None
 
             epoch_payload = {
                 "epoch": epoch,
@@ -1106,12 +1131,15 @@ class TrainStage:
         model.eval()
         loss_sum = 0.0
         batch_count = 0.0
+        use_amp = device.type == "cuda"
+        amp_dtype = torch.float16 if use_amp else torch.float32
 
         with torch.no_grad():
             for batch in eval_loader:
                 input_ids = batch["input_ids"].to(device)
                 labels = batch["labels"].to(device)
-                outputs = model(input_ids=input_ids, labels=labels)
+                with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    outputs = model(input_ids=input_ids, labels=labels)
                 loss = outputs["loss"]
                 if loss is None:
                     continue
@@ -1193,12 +1221,15 @@ class TrainStage:
         model.eval()
         loss_sum = 0.0
         batch_count = 0.0
+        use_amp = device.type == "cuda"
+        amp_dtype = torch.float16 if use_amp else torch.float32
 
         with torch.no_grad():
             for batch_input_ids, batch_labels in wiki_loader:
                 batch_input_ids = batch_input_ids.to(device)
                 batch_labels = batch_labels.to(device)
-                outputs = model(input_ids=batch_input_ids, labels=batch_labels)
+                with torch.amp.autocast(device_type=device.type, dtype=amp_dtype, enabled=use_amp):
+                    outputs = model(input_ids=batch_input_ids, labels=batch_labels)
                 loss = outputs["loss"]
                 if loss is not None:
                     loss_sum += float(loss.detach().item())
@@ -1216,7 +1247,7 @@ class TrainStage:
             return {"wikitext_loss": None, "wikitext_perplexity": None}
 
         avg_loss = loss_sum / batch_count
-        ppl = math.exp(avg_loss)
+        ppl = safe_exp(avg_loss)
         self.logger.info("WikiText-103 | loss=%.4f | perplexity=%.2f", avg_loss, ppl)
 
         if is_main_process():
