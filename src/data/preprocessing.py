@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from collections import Counter
 
-from datasets import load_from_disk, Dataset
+from datasets import load_from_disk, load_dataset, Dataset
 from langdetect import detect, LangDetectException
 from tqdm import tqdm
 
@@ -307,43 +307,51 @@ class DataPreprocessor:
         # Step 1: Load test sets for filtering
         self.load_test_sets(test_data_path, strict=strict_test_data)
         
-        # Step 2: Load source documents from disk
-        if not source_dataset_path:
-            raise ValueError(
-                "source_dataset_path is required. "
-                "Preprocessing only supports local datasets on disk."
-            )
-
-        source_path = Path(source_dataset_path)
-        if not source_path.exists():
-            raise FileNotFoundError(f"Source dataset path not found: {source_path}")
-        print(f"Loading local source dataset from disk: {source_path}")
-        local_source = load_from_disk(str(source_path))
-        if "text" not in local_source.column_names:
-            raise ValueError(
-                f"Expected a 'text' column in source dataset. Found: {local_source.column_names}"
-            )
-        if len(local_source) == 0:
-            raise ValueError("Source dataset is empty")
-        local_source = local_source.shuffle(seed=self.seed)
+        # Step 2: Load source documents
+        if source_dataset_path:
+            source_path = Path(source_dataset_path)
+            if not source_path.exists():
+                raise FileNotFoundError(f"Source dataset path not found: {source_path}")
+            print(f"Loading local source dataset from disk: {source_path}")
+            local_source = load_from_disk(str(source_path))
+            if "text" not in local_source.column_names:
+                raise ValueError(
+                    f"Expected a 'text' column in source dataset. Found: {local_source.column_names}"
+                )
+            if len(local_source) == 0:
+                raise ValueError("Source dataset is empty")
+            local_source = local_source.shuffle(seed=self.seed)
+            use_streaming = False
+        else:
+            print("No local source dataset provided. Streaming OpenWebText from HuggingFace...")
+            local_source = load_dataset("openwebtext", split="train", streaming=True)
+            local_source = local_source.shuffle(seed=self.seed, buffer_size=10000)
+            use_streaming = True
         
         # Step 3: Process documents
         print(f"Processing documents (target: {num_samples:,} clean samples)...")
         
         processed_samples = []
-        
-        # We need to process more documents than num_samples because some will be filtered
-        # Estimate: ~5% will be filtered, so process 10% extra to be safe
         max_to_check = int(num_samples * 1.2)
         
-        total_to_check = min(max_to_check, len(local_source))
-        sampled_docs = local_source.select(range(total_to_check))
-
-        for doc in tqdm(sampled_docs, total=total_to_check, desc="Processing"):
-            # Process the document
-            processed = self.process_document(doc)
-            if processed is not None:
-                processed_samples.append(processed)
+        if use_streaming:
+            checked = 0
+            for doc in tqdm(local_source, total=max_to_check, desc="Processing (streaming)"):
+                processed = self.process_document(doc)
+                if processed is not None:
+                    processed_samples.append(processed)
+                checked += 1
+                if len(processed_samples) >= num_samples:
+                    break
+                if checked >= max_to_check:
+                    break
+        else:
+            total_to_check = min(max_to_check, len(local_source))
+            sampled_docs = local_source.select(range(total_to_check))
+            for doc in tqdm(sampled_docs, total=total_to_check, desc="Processing"):
+                processed = self.process_document(doc)
+                if processed is not None:
+                    processed_samples.append(processed)
 
         if len(processed_samples) < num_samples:
             print(f"\nWarning: Checked {max_to_check:,} docs but only got {len(processed_samples):,} samples")
@@ -462,7 +470,7 @@ if __name__ == "__main__":
         "--source-dataset-path",
         type=str,
         default=None,
-        help="Local Hugging Face dataset path to preprocess",
+        help="Local Hugging Face dataset path. If omitted, streams OpenWebText from HuggingFace.",
     )
     
     args = parser.parse_args()
