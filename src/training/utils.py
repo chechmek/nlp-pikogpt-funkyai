@@ -449,12 +449,14 @@ def setup_distributed() -> tuple[int, int, int, torch.device]:
     """
     import os
     import torch.distributed as dist
+    from datetime import timedelta
 
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     use_cuda = torch.cuda.is_available()
     backend = "nccl" if use_cuda else "gloo"
 
-    dist.init_process_group(backend=backend)
+    # 30 min timeout to allow rank-0 tokenization before barrier
+    dist.init_process_group(backend=backend, timeout=timedelta(minutes=30))
 
     rank = dist.get_rank()
     world_size = dist.get_world_size()
