@@ -17,7 +17,7 @@ max_validation_samples = 10000
 
 [tokenizer]
 name = "gpt2"
-context_length = 512              # Good balance of context and memory
+context_length = 1024             # Good balance of context and memory
 append_eos_token = true
 
 [model]
