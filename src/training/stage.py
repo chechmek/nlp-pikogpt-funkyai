@@ -14,6 +14,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from datasets import Dataset, load_from_disk
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -137,6 +138,22 @@ def resolve_run_dir_from_checkpoint(checkpoint_path: Path) -> Path:
     return checkpoint_path.parent.parent
 
 
+_ACTIVATIONS: dict[str, Any] = {
+    "gelu": "gelu",
+    "relu": "relu",
+    "silu": F.silu,
+    "tanh": torch.tanh,
+}
+
+
+def _resolve_activation(name: str) -> Any:
+    if name not in _ACTIVATIONS:
+        raise ValueError(
+            f"Unsupported activation '{name}'. Choose one of: {sorted(_ACTIVATIONS)}"
+        )
+    return _ACTIVATIONS[name]
+
+
 class CausalTransformerLM(nn.Module):
     """
     Decoder-only language model implemented with nn.TransformerEncoder + causal mask.
@@ -151,10 +168,12 @@ class CausalTransformerLM(nn.Module):
         n_head: int,
         dropout: float,
         layer_norm_epsilon: float,
+        activation: str = "gelu",
     ) -> None:
         super().__init__()
         self.vocab_size = vocab_size
         self.max_seq_len = max_seq_len
+        self.activation = activation
 
         self.token_embedding = nn.Embedding(vocab_size, n_embd)
         self.position_embedding = nn.Embedding(max_seq_len, n_embd)
@@ -165,7 +184,7 @@ class CausalTransformerLM(nn.Module):
             nhead=n_head,
             dim_feedforward=4 * n_embd,
             dropout=dropout,
-            activation="gelu",
+            activation=_resolve_activation(activation),
             layer_norm_eps=layer_norm_epsilon,
             batch_first=True,
             norm_first=False,
@@ -584,6 +603,7 @@ class TrainStage:
             n_head=self.config.model.n_head,
             dropout=self.config.model.dropout,
             layer_norm_epsilon=self.config.model.layer_norm_epsilon,
+            activation=self.config.model.activation,
         )
 
     def _write_architecture_overview(self, model: CausalTransformerLM, tokenizer) -> None:
@@ -676,6 +696,7 @@ class TrainStage:
                 "n_head": self.config.model.n_head,
                 "dropout": self.config.model.dropout,
                 "layer_norm_epsilon": self.config.model.layer_norm_epsilon,
+                "activation": self.config.model.activation,
             },
             "tokenizer": {
                 "name": getattr(tokenizer, "name_or_path", self.config.tokenizer.name),

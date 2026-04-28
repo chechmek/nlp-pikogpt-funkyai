@@ -39,6 +39,7 @@ class ModelConfig(BaseModel):
     n_head: int = Field(default=4, ge=1)
     dropout: float = Field(default=0.1, ge=0.0, le=0.5)
     layer_norm_epsilon: float = Field(default=1e-5, gt=0.0)
+    activation: str = "gelu"
 
     @field_validator("n_head")
     @classmethod

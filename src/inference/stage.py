@@ -67,6 +67,7 @@ def _build_model(model_cfg: dict[str, Any]) -> CausalTransformerLM:
         n_head=int(model_cfg["n_head"]),
         dropout=float(model_cfg["dropout"]),
         layer_norm_epsilon=float(model_cfg["layer_norm_epsilon"]),
+        activation=str(model_cfg.get("activation", "gelu")),
     )
 
 
