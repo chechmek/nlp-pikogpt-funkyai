@@ -32,10 +32,12 @@ device = "auto"
 batch_size = 16
 eval_batch_size = 32
 grad_accum_steps = 2              # Gradient accumulation (effective_batch = 16 × world_size × 2)
-learning_rate = 3e-4
+learning_rate = 4e-4
+min_learning_rate = 4e-5
 weight_decay = 0.01
 num_epochs = 3
 max_train_steps = 50000
+warmup_steps = 3000
 compile_model = true
 compile_backend = "auto"
 compile_mode = "default"
