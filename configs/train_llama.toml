@@ -1,0 +1,57 @@
+# PikoGPT LLaMA-Style Configuration
+# ====================================
+# ~37M parameters - LLaMA 3.2 architecture scaled down
+# Features: RoPE, RMSNorm, SwiGLU, Grouped-Query Attention
+
+[experiment]
+name = "pikogpt_llama"
+description = "LLaMA-style: 288 embd, 10 layers, 8 heads, 4 KV heads, SwiGLU, RoPE (~38M params)"
+seed = 42
+
+[data]
+input_dataset_path = "data/processed/openwebtext_clean"
+validation_split = 0.1
+split_seed = 42
+max_train_samples = 2000000
+max_validation_samples = 10000
+
+[tokenizer]
+name = "gpt2"
+context_length = 1024
+append_eos_token = true
+
+[model]
+architecture = "llama"            # Use LLaMA-style architecture
+n_embd = 288                      # Embedding dimension
+n_layer = 10                      # Number of transformer blocks
+n_head = 8                        # Query heads
+n_kv_head = 4                     # KV heads for GQA (= n_head/2)
+ffn_dim = 768                     # SwiGLU FFN hidden dim (~8/3 * n_embd)
+rope_base = 10000.0               # RoPE base frequency
+dropout = 0.1                     # Residual dropout
+layer_norm_epsilon = 1e-5         # RMSNorm epsilon
+
+[training]
+device = "auto"
+batch_size = 32
+eval_batch_size = 64
+grad_accum_steps = 1
+learning_rate = 3e-4
+min_learning_rate = 1e-5
+weight_decay = 0.01
+num_epochs = 3
+max_train_steps = 50000
+warmup_steps = 500
+compile_model = true
+compile_backend = "auto"
+compile_mode = "default"
+save_every_steps = 500
+log_every_steps = 100
+eval_every_steps = 500
+gradient_clip_norm = 1.0
+
+[logging]
+base_dir = "runs"
+level = "INFO"
+train_jsonl_name = "train_metrics.jsonl"
+eval_jsonl_name = "eval_metrics.jsonl"

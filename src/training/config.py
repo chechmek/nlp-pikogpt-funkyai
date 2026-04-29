@@ -33,13 +33,25 @@ class TokenizerConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
+    architecture: str = "causal_transformer"  # "causal_transformer" or "llama"
     vocab_size: int | None = Field(default=None, ge=1000)
     n_embd: int = Field(default=256, ge=64)
     n_layer: int = Field(default=4, ge=1)
     n_head: int = Field(default=4, ge=1)
+    n_kv_head: int | None = Field(default=None, ge=1)  # LLaMA GQA: KV heads (None = n_head)
+    ffn_dim: int | None = Field(default=None, ge=1)  # LLaMA SwiGLU FFN dim (None = auto)
+    rope_base: float = Field(default=10000.0, gt=0.0)  # RoPE base frequency
     dropout: float = Field(default=0.1, ge=0.0, le=0.5)
     layer_norm_epsilon: float = Field(default=1e-5, gt=0.0)
-    activation: str = "gelu"
+    activation: str = "gelu"  # Only used by causal_transformer
+
+    @field_validator("architecture")
+    @classmethod
+    def validate_architecture(cls, arch: str) -> str:
+        allowed = {"causal_transformer", "llama"}
+        if arch not in allowed:
+            raise ValueError(f"model.architecture must be one of {sorted(allowed)}")
+        return arch
 
     @field_validator("n_head")
     @classmethod
@@ -48,6 +60,16 @@ class ModelConfig(BaseModel):
         if n_embd is not None and n_embd % n_head != 0:
             raise ValueError("model.n_embd must be divisible by model.n_head")
         return n_head
+
+    @field_validator("n_kv_head")
+    @classmethod
+    def validate_kv_heads(cls, n_kv_head: int | None, info):  # type: ignore[override]
+        if n_kv_head is None:
+            return n_kv_head
+        n_head = info.data.get("n_head")
+        if n_head is not None and n_head % n_kv_head != 0:
+            raise ValueError("model.n_head must be divisible by model.n_kv_head")
+        return n_kv_head
 
 
 class TrainingRuntimeConfig(BaseModel):

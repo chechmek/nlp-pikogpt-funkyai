@@ -14,7 +14,6 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
-import torch.nn.functional as F
 from datasets import Dataset, load_from_disk
 from torch import nn
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -24,6 +23,7 @@ from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoTokenizer
 
 from .config import TrainStageConfig, load_train_config, model_dump_compat
+from .models import CausalTransformerLM, build_model_from_config
 from .utils import (
     cleanup_distributed,
     compute_gradient_norm,
@@ -136,113 +136,6 @@ def resolve_run_dir_from_checkpoint(checkpoint_path: Path) -> Path:
     if checkpoint_path.parent.name == "checkpoints":
         return checkpoint_path.parent.parent.parent
     return checkpoint_path.parent.parent
-
-
-_ACTIVATIONS: dict[str, Any] = {
-    "gelu": "gelu",
-    "relu": "relu",
-    "silu": F.silu,
-    "tanh": torch.tanh,
-}
-
-
-def _resolve_activation(name: str) -> Any:
-    if name not in _ACTIVATIONS:
-        raise ValueError(
-            f"Unsupported activation '{name}'. Choose one of: {sorted(_ACTIVATIONS)}"
-        )
-    return _ACTIVATIONS[name]
-
-
-class CausalTransformerLM(nn.Module):
-    """
-    Decoder-only language model implemented with nn.TransformerEncoder + causal mask.
-    """
-
-    def __init__(
-        self,
-        vocab_size: int,
-        max_seq_len: int,
-        n_embd: int,
-        n_layer: int,
-        n_head: int,
-        dropout: float,
-        layer_norm_epsilon: float,
-        activation: str = "gelu",
-    ) -> None:
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.max_seq_len = max_seq_len
-        self.activation = activation
-
-        self.token_embedding = nn.Embedding(vocab_size, n_embd)
-        self.position_embedding = nn.Embedding(max_seq_len, n_embd)
-        self.dropout = nn.Dropout(dropout)
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=n_embd,
-            nhead=n_head,
-            dim_feedforward=4 * n_embd,
-            dropout=dropout,
-            activation=_resolve_activation(activation),
-            layer_norm_eps=layer_norm_epsilon,
-            batch_first=True,
-            norm_first=False,
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layer)
-        self.final_norm = nn.LayerNorm(n_embd, eps=layer_norm_epsilon)
-        self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
-
-        self.apply(self._init_weights)
-        self.lm_head.weight = self.token_embedding.weight
-
-    def _init_weights(self, module: nn.Module) -> None:
-        if isinstance(module, nn.Linear):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            nn.init.normal_(module.weight, mean=0.0, std=0.02)
-        elif isinstance(module, nn.LayerNorm):
-            nn.init.ones_(module.weight)
-            nn.init.zeros_(module.bias)
-
-    def _build_causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
-        return torch.triu(
-            torch.full((seq_len, seq_len), float("-inf"), device=device),
-            diagonal=1,
-        )
-
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        labels: torch.Tensor | None = None,
-    ) -> dict[str, torch.Tensor | None]:
-        batch_size, seq_len = input_ids.shape
-        if seq_len > self.max_seq_len:
-            raise ValueError(
-                f"Sequence length {seq_len} exceeds model max_seq_len {self.max_seq_len}"
-            )
-
-        positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
-        x = self.token_embedding(input_ids) + self.position_embedding(positions)
-        x = self.dropout(x)
-
-        causal_mask = self._build_causal_mask(seq_len=seq_len, device=input_ids.device)
-        x = self.transformer(x, mask=causal_mask)
-        x = self.final_norm(x)
-        logits = self.lm_head(x)
-
-        loss: torch.Tensor | None = None
-        if labels is not None:
-            shift_logits = logits[:, :-1, :].contiguous()
-            shift_labels = labels[:, 1:].contiguous()
-            loss = torch.nn.functional.cross_entropy(
-                shift_logits.view(-1, shift_logits.size(-1)),
-                shift_labels.view(-1),
-            )
-
-        return {"logits": logits, "loss": loss}
 
 
 class TrainStage:
@@ -592,21 +485,14 @@ class TrainStage:
         self.logger.info("Saved tokenized train split to: %s", train_path)
         self.logger.info("Saved tokenized validation split to: %s", eval_path)
 
-    def _build_model(self, tokenizer) -> CausalTransformerLM:
+    def _build_model(self, tokenizer) -> nn.Module:
         vocab_size = self.config.model.vocab_size or tokenizer.vocab_size
 
-        return CausalTransformerLM(
-            vocab_size=vocab_size,
-            max_seq_len=self.config.tokenizer.context_length,
-            n_embd=self.config.model.n_embd,
-            n_layer=self.config.model.n_layer,
-            n_head=self.config.model.n_head,
-            dropout=self.config.model.dropout,
-            layer_norm_epsilon=self.config.model.layer_norm_epsilon,
-            activation=self.config.model.activation,
+        return build_model_from_config(
+            self.config, vocab_size=vocab_size, max_seq_len=self.config.tokenizer.context_length
         )
 
-    def _write_architecture_overview(self, model: CausalTransformerLM, tokenizer) -> None:
+    def _write_architecture_overview(self, model: nn.Module, tokenizer) -> None:
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -677,7 +563,7 @@ class TrainStage:
 
     def _create_checkpoint_payload(
         self,
-        model: CausalTransformerLM,
+        model: nn.Module,
         tokenizer,
         optimizer,
         scheduler,
@@ -689,11 +575,15 @@ class TrainStage:
             "created_at": utc_now_iso(),
             "checkpoint_kind": checkpoint_kind,
             "model": {
+                "architecture": self.config.model.architecture,
                 "vocab_size": model.vocab_size,
                 "max_seq_len": model.max_seq_len,
                 "n_embd": self.config.model.n_embd,
                 "n_layer": self.config.model.n_layer,
                 "n_head": self.config.model.n_head,
+                "n_kv_head": self.config.model.n_kv_head,
+                "ffn_dim": self.config.model.ffn_dim,
+                "rope_base": self.config.model.rope_base,
                 "dropout": self.config.model.dropout,
                 "layer_norm_epsilon": self.config.model.layer_norm_epsilon,
                 "activation": self.config.model.activation,
@@ -728,7 +618,7 @@ class TrainStage:
 
     def _save_checkpoint(
         self,
-        model: CausalTransformerLM,
+        model: nn.Module,
         tokenizer,
         optimizer,
         scheduler,
@@ -751,7 +641,7 @@ class TrainStage:
 
     def _save_step_checkpoint(
         self,
-        model: CausalTransformerLM,
+        model: nn.Module,
         tokenizer,
         optimizer,
         scheduler,
@@ -804,7 +694,7 @@ class TrainStage:
 
     def _train_model(
         self,
-        base_model: CausalTransformerLM,
+        base_model: nn.Module,
         tokenizer,
         train_dataset: Dataset,
         eval_dataset: Dataset,

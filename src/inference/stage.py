@@ -10,7 +10,8 @@ from typing import Any
 import torch
 from transformers import AutoTokenizer
 
-from src.training.stage import CausalTransformerLM, resolve_device, set_seed
+from src.training.models import CausalTransformerLM, build_model_from_checkpoint
+from src.training.stage import resolve_device, set_seed
 
 
 def _load_checkpoint_payload(checkpoint_path: Path) -> dict[str, Any]:
@@ -45,30 +46,8 @@ def _load_checkpoint_payload(checkpoint_path: Path) -> dict[str, Any]:
     }
 
 
-def _build_model(model_cfg: dict[str, Any]) -> CausalTransformerLM:
-    required = [
-        "vocab_size",
-        "max_seq_len",
-        "n_embd",
-        "n_layer",
-        "n_head",
-        "dropout",
-        "layer_norm_epsilon",
-    ]
-    missing = [key for key in required if key not in model_cfg]
-    if missing:
-        raise ValueError(f"Checkpoint model metadata missing keys: {missing}")
-
-    return CausalTransformerLM(
-        vocab_size=int(model_cfg["vocab_size"]),
-        max_seq_len=int(model_cfg["max_seq_len"]),
-        n_embd=int(model_cfg["n_embd"]),
-        n_layer=int(model_cfg["n_layer"]),
-        n_head=int(model_cfg["n_head"]),
-        dropout=float(model_cfg["dropout"]),
-        layer_norm_epsilon=float(model_cfg["layer_norm_epsilon"]),
-        activation=str(model_cfg.get("activation", "gelu")),
-    )
+def _build_model(model_cfg: dict[str, Any]):
+    return build_model_from_checkpoint(model_cfg)
 
 
 def _load_tokenizer(tokenizer_name: str, quiet: bool = False):
@@ -83,7 +62,7 @@ def _load_tokenizer(tokenizer_name: str, quiet: bool = False):
 
 
 def _generate(
-    model: CausalTransformerLM,
+    model: torch.nn.Module,
     tokenizer,
     prompt: str,
     max_tokens: int,
