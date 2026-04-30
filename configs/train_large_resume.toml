@@ -1,0 +1,53 @@
+# PikoGPT Large Model Configuration
+# ==================================
+# ~37M parameters - Optimal balance of depth, width, and context
+# Recommended as the primary training configuration
+
+[experiment]
+name = "pikogpt_large"
+description = "Large model: 384 embd, 10 layers, 6 heads, 1024 context (~37M params)"
+seed = 42
+
+[data]
+input_dataset_path = "data/processed/openwebtext_clean"
+validation_split = 0.1
+split_seed = 42
+max_train_samples = 2000000       # 2M samples for 50K steps in 3 epochs
+max_validation_samples = 10000
+
+[tokenizer]
+name = "gpt2"
+context_length = 1024             # Good balance of context and memory
+append_eos_token = true
+
+[model]
+n_embd = 384                      # Embedding dimension
+n_layer = 10                      # Number of transformer blocks
+n_head = 6                        # Number of attention heads (head_dim = 64)
+dropout = 0.1                     # Standard dropout
+layer_norm_epsilon = 1e-5
+
+[training]
+device = "auto"
+batch_size = 32                   # 32 per GPU × 8 GPUs = 256 effective batch
+eval_batch_size = 64
+grad_accum_steps = 1              # Not needed with 8 GPUs
+learning_rate = 4e-4
+min_learning_rate = 4e-5
+weight_decay = 0.01
+num_epochs = 8
+max_train_steps = 50000
+warmup_steps = 2000
+compile_model = true
+compile_backend = "auto"
+compile_mode = "default"
+save_every_steps = 1000
+log_every_steps = 100
+eval_every_steps = 1000
+gradient_clip_norm = 1.0
+
+[logging]
+base_dir = "runs"
+level = "INFO"
+train_jsonl_name = "train_metrics.jsonl"
+eval_jsonl_name = "eval_metrics.jsonl"
