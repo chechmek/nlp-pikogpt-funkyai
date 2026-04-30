@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import torch
-from datasets import load_dataset, load_from_disk
+from datasets import Dataset, load_dataset, load_from_disk
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.inference.stage import _build_model, _load_checkpoint_payload, _load_tokenizer
@@ -110,6 +111,33 @@ def _pack_text_dataset(
     ]
 
 
+def _eval_cache_path(
+    cache_name: str,
+    tokenizer_name: str,
+    block_size: int,
+    append_eos_token: bool,
+    doc_limit: int | None = None,
+) -> Path:
+    safe_tokenizer = tokenizer_name.replace("/", "_")
+    suffix = f"_docs{doc_limit}" if doc_limit is not None else "_docsall"
+    return Path("runs/eval_cache") / f"{cache_name}_{safe_tokenizer}_ctx{block_size}_eos{int(append_eos_token)}{suffix}"
+
+
+def _save_packed_sequences(sequences: list[list[int]], cache_path: Path) -> None:
+    dataset = Dataset.from_dict(
+        {"input_ids": sequences, "labels": [seq.copy() for seq in sequences]}
+    )
+    if cache_path.exists():
+        shutil.rmtree(cache_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    dataset.save_to_disk(str(cache_path))
+
+
+def _load_packed_sequences(cache_path: Path) -> list[list[int]]:
+    dataset = load_from_disk(str(cache_path))
+    return [row["input_ids"] for row in dataset]
+
+
 def _evaluate_wikitext(
     model: torch.nn.Module,
     tokenizer,
@@ -154,6 +182,9 @@ def _evaluate_owt_test(
     test_data_path: str | Path,
     append_eos_token: bool,
     logger: logging.Logger,
+    tokenizer_name: str,
+    max_docs: int | None = None,
+    rebuild_cache: bool = False,
 ) -> dict[str, float | None]:
     path = Path(test_data_path).expanduser().resolve()
     logger.info("Running OpenWebText test evaluation from: %s", path)
@@ -161,9 +192,35 @@ def _evaluate_owt_test(
         logger.warning("OpenWebText test path not found: %s", path)
         return {"owt_test_loss": None, "owt_test_perplexity": None}
 
+    cache_path = _eval_cache_path(
+        cache_name="owt_test",
+        tokenizer_name=tokenizer_name,
+        block_size=block_size,
+        append_eos_token=append_eos_token,
+        doc_limit=max_docs,
+    )
+    if cache_path.exists() and not rebuild_cache:
+        logger.info("Loading cached packed OpenWebText eval set from: %s", cache_path)
+        sequences = _load_packed_sequences(cache_path)
+        logger.info("Loaded cached OpenWebText eval set: %s sequences", f"{len(sequences):,}")
+        avg_loss = _evaluate_packed_sequences(model, sequences, eval_batch_size, device)
+        if avg_loss is None:
+            return {"owt_test_loss": None, "owt_test_perplexity": None}
+        ppl = safe_exp(avg_loss)
+        logger.info("OpenWebText test | loss=%.4f | perplexity=%.2f", avg_loss, ppl)
+        return {"owt_test_loss": avg_loss, "owt_test_perplexity": ppl}
+
     logger.info("Loading OpenWebText test dataset from disk...")
     dataset = load_from_disk(str(path))
-    logger.info("Loaded OpenWebText test dataset with %s documents", f"{len(dataset):,}")
+    if max_docs is not None:
+        limit = min(len(dataset), max_docs)
+        dataset = dataset.select(range(limit))
+        logger.info("Capped OpenWebText test dataset to %s documents", f"{len(dataset):,}")
+    else:
+        logger.info("Loaded OpenWebText test dataset with %s documents", f"{len(dataset):,}")
+
+    if rebuild_cache and cache_path.exists():
+        logger.info("Rebuilding cached OpenWebText eval set at: %s", cache_path)
 
     logger.info("Tokenizing and packing OpenWebText test documents...")
     eos_id = tokenizer.eos_token_id
@@ -197,6 +254,8 @@ def _evaluate_owt_test(
         return {"owt_test_loss": None, "owt_test_perplexity": None}
 
     logger.info("OpenWebText test: %s sequences of length %s", f"{len(sequences):,}", block_size)
+    logger.info("Saving cached packed OpenWebText eval set to: %s", cache_path)
+    _save_packed_sequences(sequences, cache_path)
     avg_loss = _evaluate_packed_sequences(model, sequences, eval_batch_size, device)
     if avg_loss is None:
         return {"owt_test_loss": None, "owt_test_perplexity": None}
@@ -217,6 +276,8 @@ def main(
     seed: int = 42,
     owt_test_path: str | Path = "src/data/raw/NLP26_OWT_eval/test",
     eval_batch_size: int = 64,
+    owt_max_docs: int | None = None,
+    rebuild_eval_cache: bool = False,
 ) -> dict[str, Any]:
     checkpoint_path = Path(checkpoint_path).expanduser().resolve()
     label = _checkpoint_label(checkpoint_path)
@@ -252,6 +313,7 @@ def main(
         "device": str(resolved_device),
         "eval_batch_size": eval_batch_size,
         "owt_test_path": str(Path(owt_test_path).expanduser()),
+        "owt_max_docs": owt_max_docs,
         "model": payload["model"],
         "tokenizer": payload["tokenizer"],
     }
@@ -276,6 +338,9 @@ def main(
             test_data_path=owt_test_path,
             append_eos_token=append_eos_token,
             logger=logger,
+            tokenizer_name=tokenizer_name,
+            max_docs=owt_max_docs,
+            rebuild_cache=rebuild_eval_cache,
         )
     )
 

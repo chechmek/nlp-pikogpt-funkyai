@@ -155,6 +155,17 @@ def main():
         default=64,
         help="Evaluate stage only: evaluation batch size",
     )
+    parser.add_argument(
+        "--owt-max-docs",
+        type=int,
+        default=None,
+        help="Evaluate stage only: optional cap on OWT test documents for quicker comparisons",
+    )
+    parser.add_argument(
+        "--rebuild-eval-cache",
+        action="store_true",
+        help="Evaluate stage only: rebuild cached packed eval datasets",
+    )
 
     args = parser.parse_args()
 
@@ -269,6 +280,8 @@ def run_evaluate(args):
         seed=args.seed,
         owt_test_path=args.owt_test_path,
         eval_batch_size=args.eval_batch_size,
+        owt_max_docs=args.owt_max_docs,
+        rebuild_eval_cache=args.rebuild_eval_cache,
     )
 
 
