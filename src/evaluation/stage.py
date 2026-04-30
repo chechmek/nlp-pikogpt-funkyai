@@ -212,6 +212,7 @@ def main(
         raise ValueError("Checkpoint tokenizer metadata must include 'name'")
 
     tokenizer = _load_tokenizer(tokenizer_name=tokenizer_name, quiet=False)
+    tokenizer.model_max_length = 10_000_000
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
