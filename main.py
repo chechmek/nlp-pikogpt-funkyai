@@ -8,6 +8,7 @@ Usage:
     python main.py --stage train --config configs/train_default.toml
     python main.py --stage train --config configs/train_default.yaml --prepare-only
     python main.py --stage inference --checkpoint CKPT.pt --prompt "Question: ... Answer:" --max-tokens 1 --temperature 0 --device auto --leaderboard --seed 0
+    python main.py --stage chat --checkpoint runs/<run>/artifacts/model_final.pt
 """
 
 import argparse
@@ -26,8 +27,8 @@ def main():
         "--stage",
         type=str,
         required=True,
-        choices=["preprocess", "train", "inference"],
-        help="Which stage to run: preprocess, train, or inference",
+        choices=["preprocess", "train", "inference", "chat"],
+        help="Which stage to run: preprocess, train, inference, or chat",
     )
 
     # Preprocessing arguments
@@ -103,14 +104,14 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=100,
-        help="Maximum tokens to generate (default: 100)",
+        default=32,
+        help="Maximum tokens to generate (default: 32)",
     )
     parser.add_argument(
         "--temperature",
         type=float,
-        default=1.0,
-        help="Sampling temperature (default: 1.0)",
+        default=0.8,
+        help="Sampling temperature (default: 0.8)",
     )
     parser.add_argument(
         "--device",
@@ -123,6 +124,24 @@ def main():
         action="store_true",
         help="Leaderboard mode: output only generated text",
     )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=str,
+        default="runs",
+        help="Chat stage only: root directory scanned for model checkpoints",
+    )
+    parser.add_argument(
+        "--server-name",
+        type=str,
+        default="127.0.0.1",
+        help="Chat stage only: host for the local web UI",
+    )
+    parser.add_argument(
+        "--server-port",
+        type=int,
+        default=7860,
+        help="Chat stage only: port for the local web UI",
+    )
 
     args = parser.parse_args()
 
@@ -133,6 +152,8 @@ def main():
         run_training(args)
     elif args.stage == "inference":
         run_inference(args)
+    elif args.stage == "chat":
+        run_chat(args)
 
 
 def run_preprocessing(args):
@@ -201,6 +222,22 @@ def run_inference(args):
         device=args.device,
         leaderboard=args.leaderboard,
         seed=args.seed,
+    )
+
+
+def run_chat(args):
+    """Run the chat demo stage."""
+    from src.chat.stage import main as chat_main
+
+    chat_main(
+        checkpoint_path=args.checkpoint,
+        checkpoint_dir=args.checkpoint_dir,
+        device=args.device,
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        seed=args.seed,
+        server_name=args.server_name,
+        server_port=args.server_port,
     )
 
 
