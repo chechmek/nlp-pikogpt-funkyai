@@ -44,3 +44,5 @@ base_dir = "runs" # Base folder where run artifacts/logs are written.
 level = "INFO" # Console/file logger level.
 train_jsonl_name = "train_metrics.jsonl" # Per-step training metrics file.
 eval_jsonl_name = "eval_metrics.jsonl" # Evaluation and epoch metrics file.
+
+python3 main.py --stage inference --checkpoint runs/train_large_run/artifacts/model_final.pt --prompt "yo wussap" --max-tokens 32 --temperature 0.8 --device cuda --seed 42

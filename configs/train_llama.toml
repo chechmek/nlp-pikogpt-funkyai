@@ -33,9 +33,9 @@ layer_norm_epsilon = 1e-5         # RMSNorm epsilon
 
 [training]
 device = "auto"
-batch_size = 32
+batch_size = 16
 eval_batch_size = 64
-grad_accum_steps = 1
+grad_accum_steps = 2
 learning_rate = 3e-4
 min_learning_rate = 1e-5
 weight_decay = 0.01
