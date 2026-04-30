@@ -9,6 +9,7 @@ Usage:
     python main.py --stage train --config configs/train_default.yaml --prepare-only
     python main.py --stage inference --checkpoint CKPT.pt --prompt "Question: ... Answer:" --max-tokens 1 --temperature 0 --device auto --leaderboard --seed 0
     python main.py --stage chat --checkpoint runs/<run>/artifacts/model_final.pt
+    python main.py --stage evaluate --checkpoint CKPT.pt --device auto
 """
 
 import argparse
@@ -27,8 +28,8 @@ def main():
         "--stage",
         type=str,
         required=True,
-        choices=["preprocess", "train", "inference", "chat"],
-        help="Which stage to run: preprocess, train, inference, or chat",
+        choices=["preprocess", "train", "inference", "chat", "evaluate"],
+        help="Which stage to run: preprocess, train, inference, chat, or evaluate",
     )
 
     # Preprocessing arguments
@@ -142,6 +143,18 @@ def main():
         default=7860,
         help="Chat stage only: port for the local web UI",
     )
+    parser.add_argument(
+        "--owt-test-path",
+        type=str,
+        default="src/data/raw/NLP26_OWT_eval/test",
+        help="Evaluate stage only: path to official OpenWebText test split",
+    )
+    parser.add_argument(
+        "--eval-batch-size",
+        type=int,
+        default=64,
+        help="Evaluate stage only: evaluation batch size",
+    )
 
     args = parser.parse_args()
 
@@ -154,6 +167,8 @@ def main():
         run_inference(args)
     elif args.stage == "chat":
         run_chat(args)
+    elif args.stage == "evaluate":
+        run_evaluate(args)
 
 
 def run_preprocessing(args):
@@ -238,6 +253,22 @@ def run_chat(args):
         seed=args.seed,
         server_name=args.server_name,
         server_port=args.server_port,
+    )
+
+
+def run_evaluate(args):
+    """Run standalone checkpoint evaluation."""
+    from src.evaluation.stage import main as evaluate_main
+
+    if not args.checkpoint:
+        raise ValueError("--checkpoint is required for --stage evaluate")
+
+    evaluate_main(
+        checkpoint_path=args.checkpoint,
+        device=args.device,
+        seed=args.seed,
+        owt_test_path=args.owt_test_path,
+        eval_batch_size=args.eval_batch_size,
     )
 
 
