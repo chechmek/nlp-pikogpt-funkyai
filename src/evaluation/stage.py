@@ -161,14 +161,37 @@ def _evaluate_owt_test(
         logger.warning("OpenWebText test path not found: %s", path)
         return {"owt_test_loss": None, "owt_test_perplexity": None}
 
+    logger.info("Loading OpenWebText test dataset from disk...")
     dataset = load_from_disk(str(path))
-    texts = [row.get("text", "") for row in dataset]
-    sequences = _pack_text_dataset(
-        rows=texts,
-        tokenizer=tokenizer,
-        block_size=block_size,
-        append_eos_token=append_eos_token,
-    )
+    logger.info("Loaded OpenWebText test dataset with %s documents", f"{len(dataset):,}")
+
+    logger.info("Tokenizing and packing OpenWebText test documents...")
+    eos_id = tokenizer.eos_token_id
+    all_tokens: list[int] = []
+    processed_docs = 0
+
+    for doc in dataset:
+        text = doc.get("text", "")
+        if text and text.strip():
+            encoded = tokenizer(text, add_special_tokens=False)["input_ids"]
+            all_tokens.extend(encoded)
+            if append_eos_token and eos_id is not None:
+                all_tokens.append(eos_id)
+        processed_docs += 1
+        if processed_docs % 1000 == 0:
+            logger.info(
+                "OpenWebText tokenization progress: %s docs | %s tokens accumulated",
+                f"{processed_docs:,}",
+                f"{len(all_tokens):,}",
+            )
+
+    logger.info("Finished tokenization: %s docs | %s tokens total", f"{processed_docs:,}", f"{len(all_tokens):,}")
+    usable = (len(all_tokens) // block_size) * block_size
+    logger.info("Packing tokens into fixed-length sequences of %s...", block_size)
+    sequences = [
+        all_tokens[i : i + block_size]
+        for i in range(0, usable, block_size)
+    ]
     if not sequences:
         logger.warning("OpenWebText test produced 0 packed sequences")
         return {"owt_test_loss": None, "owt_test_perplexity": None}
