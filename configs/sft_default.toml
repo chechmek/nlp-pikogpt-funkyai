@@ -1,0 +1,34 @@
+# SFT Config — Supervised Fine-Tuning on Alpaca
+# -----------------------------------------------
+# Fill in base_checkpoint before running:
+#   python main.py --stage sft --config configs/sft_default.toml \
+#                  --base-checkpoint runs/<run>/artifacts/model_final.pt
+
+[sft]
+# Path to the pre-trained PikoGPT checkpoint (required)
+# Override via: --base-checkpoint runs/<run>/artifacts/model_final.pt
+base_checkpoint = ""
+
+[sft_data]
+# tatsu-lab/alpaca has 52K pairs; 5000 is a good starting point for PikoGPT
+max_samples = 5000
+
+# Fraction held out for validation
+val_split = 0.05
+
+[sft_training]
+device = "auto"                 # auto / cuda / mps / cpu
+batch_size = 4                  # smaller than pretraining to avoid OOM
+learning_rate = 1e-4            # ~3x smaller than pretraining (avoids catastrophic forgetting)
+weight_decay = 0.01
+num_epochs = 3
+max_train_steps = 1000          # cap; comment out to run full epochs
+warmup_steps = 50
+gradient_clip_norm = 1.0
+log_every_steps = 10
+eval_every_steps = 50
+save_every_steps = 200
+
+[sft_logging]
+base_dir = "runs_sft"
+seed = 42
