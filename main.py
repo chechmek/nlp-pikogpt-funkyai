@@ -28,8 +28,8 @@ def main():
         "--stage",
         type=str,
         required=True,
-        choices=["preprocess", "train", "inference", "chat", "evaluate"],
-        help="Which stage to run: preprocess, train, inference, chat, or evaluate",
+        choices=["preprocess", "train", "sft", "inference", "chat", "evaluate"],
+        help="Which stage to run: preprocess, train, sft, inference, chat, or evaluate",
     )
 
     # Preprocessing arguments
@@ -70,6 +70,44 @@ def main():
         type=str,
         default=None,
         help="Preprocess only: local Hugging Face dataset path for input documents",
+    )
+
+    # SFT arguments
+    parser.add_argument(
+        "--base-checkpoint",
+        type=str,
+        default=None,
+        help="SFT stage: path to pre-trained base model checkpoint",
+    )
+    parser.add_argument(
+        "--sft-max-samples",
+        type=int,
+        default=5000,
+        help="SFT stage: max Alpaca samples to use (default: 5000)",
+    )
+    parser.add_argument(
+        "--sft-lr",
+        type=float,
+        default=1e-4,
+        help="SFT stage: learning rate (default: 1e-4, ~3x lower than pretraining)",
+    )
+    parser.add_argument(
+        "--sft-epochs",
+        type=int,
+        default=3,
+        help="SFT stage: number of epochs (default: 3)",
+    )
+    parser.add_argument(
+        "--sft-max-steps",
+        type=int,
+        default=1000,
+        help="SFT stage: max training steps cap (default: 1000)",
+    )
+    parser.add_argument(
+        "--sft-batch-size",
+        type=int,
+        default=4,
+        help="SFT stage: batch size (default: 4)",
     )
 
     # Training arguments
@@ -174,6 +212,8 @@ def main():
         run_preprocessing(args)
     elif args.stage == "train":
         run_training(args)
+    elif args.stage == "sft":
+        run_sft(args)
     elif args.stage == "inference":
         run_inference(args)
     elif args.stage == "chat":
@@ -214,6 +254,25 @@ def run_preprocessing(args):
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(0)
+
+
+def run_sft(args):
+    """Run the SFT stage."""
+    from src.sft.stage import main as sft_main
+
+    if not args.base_checkpoint:
+        raise ValueError("--base-checkpoint is required for --stage sft")
+
+    sft_main(
+        base_checkpoint=args.base_checkpoint,
+        max_samples=args.sft_max_samples,
+        device=args.device,
+        batch_size=args.sft_batch_size,
+        learning_rate=args.sft_lr,
+        num_epochs=args.sft_epochs,
+        max_train_steps=args.sft_max_steps,
+        seed=args.seed,
+    )
 
 
 def run_training(args):
