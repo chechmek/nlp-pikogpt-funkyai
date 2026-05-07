@@ -111,6 +111,12 @@ def main():
         help="SFT stage: batch size (default: 4)",
     )
     parser.add_argument(
+        "--sft-data-path",
+        type=str,
+        default=None,
+        help="SFT stage: optional local JSONL dataset in Alpaca-style instruction/input/output schema",
+    )
+    parser.add_argument(
         "--dpo-data-path",
         type=str,
         default=None,
@@ -316,6 +322,7 @@ def run_sft(args):
 
     sft_main(
         base_checkpoint=args.base_checkpoint,
+        data_path=args.sft_data_path,
         max_samples=args.sft_max_samples,
         device=args.device,
         batch_size=args.sft_batch_size,

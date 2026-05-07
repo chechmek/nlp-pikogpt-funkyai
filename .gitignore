@@ -23,6 +23,7 @@ wheels/
 /runs/
 /runs_smoke/
 /runs_dpo/
+/runs_sft/
 
 # run evaluations und plots
 /plots/

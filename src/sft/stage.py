@@ -90,12 +90,16 @@ class AlpacaSFTDataset(TorchDataset):
         self,
         tokenizer,
         max_seq_len: int,
+        data_path: str | Path | None = None,
         max_samples: int | None = None,
         val_split: float = 0.05,
         split: str = "train",
         seed: int = 42,
     ) -> None:
-        raw = load_dataset("tatsu-lab/alpaca", split="train")
+        if data_path is None:
+            raw = load_dataset("tatsu-lab/alpaca", split="train")
+        else:
+            raw = load_dataset("json", data_files=str(Path(data_path).expanduser().resolve()), split="train")
 
         if max_samples is not None:
             raw = raw.select(range(min(max_samples, len(raw))))
@@ -111,8 +115,8 @@ class AlpacaSFTDataset(TorchDataset):
         skipped = 0
 
         for item in data:
-            prompt = _format_prompt(item["instruction"], item.get("input", ""))
-            response = item["output"]
+            prompt = _format_prompt(str(item["instruction"]), str(item.get("input", "")))
+            response = str(item["output"])
 
             prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
             response_ids = tokenizer.encode(response, add_special_tokens=False)
@@ -171,6 +175,7 @@ class SFTStage:
     def __init__(
         self,
         base_checkpoint: str | Path,
+        data_path: str | Path | None = None,
         run_name: str | None = None,
         # data
         max_samples: int | None = 5000,
@@ -192,6 +197,7 @@ class SFTStage:
         seed: int = 42,
     ) -> None:
         self.base_checkpoint = Path(base_checkpoint)
+        self.data_path = Path(data_path).expanduser().resolve() if data_path else None
         self.max_samples = max_samples
         self.val_split = val_split
         self.device_name = device
@@ -209,7 +215,8 @@ class SFTStage:
         self.seed = seed
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        self.run_name = run_name or f"sft_alpaca_{timestamp}"
+        dataset_tag = self.data_path.stem if self.data_path else "alpaca"
+        self.run_name = run_name or f"sft_{dataset_tag}_{timestamp}"
         self.run_dir = self.base_dir / self.run_name
         self.artifacts_dir = self.run_dir / "artifacts"
         self.logs_dir = self.run_dir / "logs"
@@ -281,11 +288,14 @@ class SFTStage:
 
     def _build_datasets(self, tokenizer, max_seq_len: int) -> tuple[AlpacaSFTDataset, AlpacaSFTDataset]:
         self.logger.info(
-            "Building Alpaca SFT dataset (max_samples=%s, max_seq_len=%d)",
-            self.max_samples, max_seq_len,
+            "Building SFT dataset (data_path=%s, max_samples=%s, max_seq_len=%d)",
+            self.data_path if self.data_path else "tatsu-lab/alpaca",
+            self.max_samples,
+            max_seq_len,
         )
         train_ds = AlpacaSFTDataset(
             tokenizer, max_seq_len,
+            data_path=self.data_path,
             max_samples=self.max_samples,
             val_split=self.val_split,
             split="train",
@@ -293,6 +303,7 @@ class SFTStage:
         )
         val_ds = AlpacaSFTDataset(
             tokenizer, max_seq_len,
+            data_path=self.data_path,
             max_samples=self.max_samples,
             val_split=self.val_split,
             split="val",
@@ -492,6 +503,7 @@ class SFTStage:
 
 def main(
     base_checkpoint: str,
+    data_path: str | None = None,
     run_name: str | None = None,
     max_samples: int | None = 5000,
     val_split: float = 0.05,
@@ -511,6 +523,7 @@ def main(
 ) -> dict[str, Any]:
     stage = SFTStage(
         base_checkpoint=base_checkpoint,
+        data_path=data_path,
         run_name=run_name,
         max_samples=max_samples,
         val_split=val_split,
