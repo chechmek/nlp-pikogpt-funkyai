@@ -98,9 +98,11 @@ nlp-pikogpt-funkyai/
 |-------|---------|--------|-------------|
 | `preprocess` | `python main.py --stage preprocess` | ✅ Implemented | Clean and filter OpenWebText |
 | `train` | `python main.py --stage train` | ✅ Implemented | Pretrain the language model |
+| `sft` | `python main.py --stage sft` | ✅ Implemented | Supervised instruction tuning from a base checkpoint |
+| `dpo` | `python main.py --stage dpo` | ✅ Implemented | Preference optimization from an SFT checkpoint |
 | `inference` | `python main.py --stage inference` | ✅ Implemented | Generate text from a trained checkpoint |
-| `evaluate` | `python main.py --stage evaluate` | 🔲 Planned | Run benchmarks |
-| `chat` | `python main.py --stage chat` | 🔲 Planned | Interactive chat interface |
+| `evaluate` | `python main.py --stage evaluate` | ✅ Implemented | Run benchmarks |
+| `chat` | `python main.py --stage chat` | ✅ Implemented | Interactive chat interface |
 
 ## Usage
 
@@ -165,6 +167,33 @@ python main.py --stage inference \
     --device auto \
     --leaderboard \
     --seed 0
+```
+
+### DPO
+```bash
+# Prepare local UltraFeedback preference subsets
+python3 scripts/prepare_ultrafeedback_dpo.py \
+    --output-dir data/dpo \
+    --smoke-samples 500 \
+    --train-samples 5000
+
+# Smoke DPO run on 500 pairs
+python3 main.py --stage dpo \
+    --base-checkpoint runs/models/model_final_sft.pt \
+    --dpo-data-path data/dpo/ultrafeedback_500.jsonl \
+    --dpo-max-steps 50 \
+    --dpo-batch-size 2 \
+    --dpo-beta 0.1 \
+    --device auto
+
+# Main DPO run on 5k pairs
+python3 main.py --stage dpo \
+    --base-checkpoint runs/models/model_final_sft.pt \
+    --dpo-data-path data/dpo/ultrafeedback_5000.jsonl \
+    --dpo-max-steps 200 \
+    --dpo-batch-size 2 \
+    --dpo-beta 0.1 \
+    --device auto
 ```
 
 ## EDA Findings

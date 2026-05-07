@@ -22,6 +22,7 @@ wheels/
 # model checkpoints und runs
 /runs/
 /runs_smoke/
+/runs_dpo/
 
 # run evaluations und plots
 /plots/

@@ -9,6 +9,7 @@ Usage:
     python main.py --stage train --config configs/train_default.yaml --prepare-only
     python main.py --stage inference --checkpoint CKPT.pt --prompt "Question: ... Answer:" --max-tokens 1 --temperature 0 --device auto --leaderboard --seed 0
     python main.py --stage chat --checkpoint runs/<run>/artifacts/model_final.pt
+    python main.py --stage dpo --base-checkpoint runs/models/model_final_sft.pt --dpo-data-path data/dpo/ultrafeedback_5k.jsonl
     python main.py --stage evaluate --checkpoint CKPT.pt --device auto
 """
 
@@ -28,8 +29,8 @@ def main():
         "--stage",
         type=str,
         required=True,
-        choices=["preprocess", "train", "sft", "inference", "chat", "evaluate"],
-        help="Which stage to run: preprocess, train, sft, inference, chat, or evaluate",
+        choices=["preprocess", "train", "sft", "dpo", "inference", "chat", "evaluate"],
+        help="Which stage to run: preprocess, train, sft, dpo, inference, chat, or evaluate",
     )
 
     # Preprocessing arguments
@@ -108,6 +109,54 @@ def main():
         type=int,
         default=4,
         help="SFT stage: batch size (default: 4)",
+    )
+    parser.add_argument(
+        "--dpo-data-path",
+        type=str,
+        default=None,
+        help="DPO stage: path to local JSONL preference dataset with prompt/chosen/rejected",
+    )
+    parser.add_argument(
+        "--dpo-max-samples",
+        type=int,
+        default=None,
+        help="DPO stage: optional cap on loaded preference pairs",
+    )
+    parser.add_argument(
+        "--dpo-beta",
+        type=float,
+        default=0.1,
+        help="DPO stage: beta coefficient for preference sharpness (default: 0.1)",
+    )
+    parser.add_argument(
+        "--dpo-lr",
+        type=float,
+        default=5e-6,
+        help="DPO stage: learning rate (default: 5e-6)",
+    )
+    parser.add_argument(
+        "--dpo-epochs",
+        type=int,
+        default=1,
+        help="DPO stage: number of epochs (default: 1)",
+    )
+    parser.add_argument(
+        "--dpo-max-steps",
+        type=int,
+        default=200,
+        help="DPO stage: max training steps cap (default: 200)",
+    )
+    parser.add_argument(
+        "--dpo-batch-size",
+        type=int,
+        default=2,
+        help="DPO stage: batch size (default: 2)",
+    )
+    parser.add_argument(
+        "--dpo-val-split",
+        type=float,
+        default=0.05,
+        help="DPO stage: validation split fraction (default: 0.05)",
     )
 
     # Training arguments
@@ -214,6 +263,8 @@ def main():
         run_training(args)
     elif args.stage == "sft":
         run_sft(args)
+    elif args.stage == "dpo":
+        run_dpo(args)
     elif args.stage == "inference":
         run_inference(args)
     elif args.stage == "chat":
@@ -283,6 +334,30 @@ def run_training(args):
         config_path=args.config,
         prepare_only=args.prepare_only,
         resume_from_checkpoint=args.resume_from,
+    )
+
+
+def run_dpo(args):
+    """Run the DPO stage."""
+    from src.dpo.stage import main as dpo_main
+
+    if not args.base_checkpoint:
+        raise ValueError("--base-checkpoint is required for --stage dpo")
+    if not args.dpo_data_path:
+        raise ValueError("--dpo-data-path is required for --stage dpo")
+
+    dpo_main(
+        base_checkpoint=args.base_checkpoint,
+        data_path=args.dpo_data_path,
+        max_samples=args.dpo_max_samples,
+        val_split=args.dpo_val_split,
+        device=args.device,
+        batch_size=args.dpo_batch_size,
+        learning_rate=args.dpo_lr,
+        beta=args.dpo_beta,
+        num_epochs=args.dpo_epochs,
+        max_train_steps=args.dpo_max_steps,
+        seed=args.seed,
     )
 
 
