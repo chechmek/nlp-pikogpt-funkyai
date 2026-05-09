@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import io
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +127,74 @@ def _generate(
     }
 
 
+def _parse_mc_options(prompt: str) -> list[tuple[str, str]]:
+    matches = re.findall(r"(?m)^([A-E])\)\s*(.+)$", prompt)
+    return [(letter, text.strip()) for letter, text in matches]
+
+
+def _score_continuation(
+    model: CausalTransformerLM,
+    tokenizer,
+    prompt: str,
+    continuation: str,
+    device: torch.device,
+) -> float:
+    prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
+    continuation_ids = tokenizer.encode(continuation, add_special_tokens=False)
+    if not continuation_ids:
+        return float("-inf")
+
+    full_ids = prompt_ids + continuation_ids
+    if len(full_ids) < 2:
+        return float("-inf")
+
+    input_ids = torch.tensor([full_ids], dtype=torch.long, device=device)
+    model_input = input_ids[:, -model.max_seq_len :]
+    with torch.no_grad():
+        logits = model(input_ids=model_input)["logits"]
+
+    truncated_ids = model_input[0].tolist()
+    truncated_prompt_len = min(len(prompt_ids), len(truncated_ids))
+    log_probs = torch.log_softmax(logits[:, :-1, :], dim=-1)
+    target_ids = model_input[:, 1:]
+
+    score = 0.0
+    for pos in range(target_ids.shape[1]):
+        target_index = pos + 1
+        if target_index < truncated_prompt_len:
+            continue
+        token_id = target_ids[0, pos].item()
+        score += float(log_probs[0, pos, token_id].item())
+    return score
+
+
+def _predict_mc_letter(
+    model: CausalTransformerLM,
+    tokenizer,
+    prompt: str,
+    device: torch.device,
+) -> str | None:
+    options = _parse_mc_options(prompt)
+    if len(options) < 2:
+        return None
+
+    best_letter: str | None = None
+    best_score = float("-inf")
+    for letter, text in options:
+        continuation = f" {letter}) {text}"
+        score = _score_continuation(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            continuation=continuation,
+            device=device,
+        )
+        if score > best_score:
+            best_score = score
+            best_letter = letter
+    return best_letter
+
+
 def main(
     checkpoint_path: str | Path,
     prompt: str,
@@ -155,6 +224,24 @@ def main(
     model = _build_model(payload["model"])
     model.load_state_dict(payload["state_dict"])
     model.to(resolved_device)
+    model.eval()
+
+    if leaderboard:
+        mc_letter = _predict_mc_letter(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            device=resolved_device,
+        )
+        if mc_letter is not None:
+            result = {
+                "generated_text": mc_letter,
+                "full_text": prompt + mc_letter,
+                "generated_token_ids": [],
+                "device": str(resolved_device),
+            }
+            print(result["generated_text"])
+            return result
 
     result = _generate(
         model=model,
