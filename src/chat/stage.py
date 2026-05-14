@@ -12,7 +12,7 @@ from src.inference.stage import _build_model, _generate, _load_checkpoint_payloa
 from src.training.stage import resolve_device, set_seed
 
 
-SYSTEM_PROMPT = "Question: {question}\nAnswer:"
+MAX_HISTORY_TURNS = 4
 
 
 LOGGER = logging.getLogger("pikogpt.chat")
@@ -27,8 +27,19 @@ def _discover_checkpoints(checkpoint_dir: str | Path) -> list[str]:
     return [str(path) for path in checkpoints]
 
 
-def _format_prompt(user_message: str) -> str:
-    return SYSTEM_PROMPT.format(question=user_message.strip())
+def _format_prompt(history: list[dict[str, str]], user_message: str) -> str:
+    turns = history[-MAX_HISTORY_TURNS:]
+    lines: list[str] = []
+    for turn in turns:
+        user = turn["user"].strip()
+        assistant = turn["assistant"].strip()
+        if user:
+            lines.append(f"Question: {user}")
+        if assistant:
+            lines.append(f"Answer: {assistant}")
+    lines.append(f"Question: {user_message.strip()}")
+    lines.append("Answer:")
+    return "\n".join(lines)
 
 
 def _to_chatbot_messages(history: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -88,7 +99,7 @@ class ChatSession:
         status = self.load_checkpoint(checkpoint_path)
         set_seed(self.seed)
 
-        prompt = _format_prompt(user_message)
+        prompt = _format_prompt(history, user_message)
         self.logger.info("Prompt sent to model:\n%s", prompt)
         outputs = _generate(
             model=self.model,

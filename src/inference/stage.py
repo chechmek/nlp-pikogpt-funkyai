@@ -16,9 +16,15 @@ from src.training.stage import CausalTransformerLM, resolve_device, set_seed
 
 EOS_LOGIT_DIVISOR = 1.5
 TOKEN_LOGIT_DIVISORS: dict[int, float] = {
-    447: 1.5,
+    # 32: 0.5,
+    # 33: 0.5,
+    # 34: 0.5,
+    # 35: 0.5,
+    # 36: 0.5,
+    447: 1,
 }
-REPETITION_PENALTY = 1
+REPETITION_PENALTY = 2
+NO_REPEAT_NGRAM_SIZE = 4
 
 
 def _load_checkpoint_payload(checkpoint_path: Path) -> dict[str, Any]:
@@ -114,15 +120,7 @@ def _generate(
             model_input = input_ids[:, -model.max_seq_len :]
             outputs = model(input_ids=model_input)
             next_token_logits = outputs["logits"][:, -1, :]
-            next_token_logits = next_token_logits.clone()
-            if tokenizer.eos_token_id is not None and EOS_LOGIT_DIVISOR > 1.0:
-                next_token_logits[:, tokenizer.eos_token_id] = (
-                    next_token_logits[:, tokenizer.eos_token_id] / EOS_LOGIT_DIVISOR
-                )
-            for token_id, divisor in TOKEN_LOGIT_DIVISORS.items():
-                if divisor > 1.0 and 0 <= token_id < next_token_logits.shape[-1]:
-                    next_token_logits[:, token_id] = next_token_logits[:, token_id] / divisor
-            next_token_logits = _apply_repetition_penalty(next_token_logits, generated_ids)
+            next_token_logits = _apply_token_penalties(next_token_logits, tokenizer, generated_ids)
 
             if temperature == 0:
                 next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
@@ -166,6 +164,36 @@ def _apply_repetition_penalty(logits: torch.Tensor, token_ids: list[int]) -> tor
             value * REPETITION_PENALTY,
             value / REPETITION_PENALTY,
         )
+    return adjusted
+
+
+def _get_banned_ngram_tokens(token_ids: list[int]) -> set[int]:
+    if NO_REPEAT_NGRAM_SIZE <= 0 or len(token_ids) + 1 < NO_REPEAT_NGRAM_SIZE:
+        return set()
+    if NO_REPEAT_NGRAM_SIZE == 1:
+        return set(token_ids)
+
+    prefix = token_ids[-(NO_REPEAT_NGRAM_SIZE - 1) :]
+    banned: set[int] = set()
+    window = NO_REPEAT_NGRAM_SIZE - 1
+    for idx in range(len(token_ids) - window):
+        if token_ids[idx : idx + window] == prefix:
+            banned.add(token_ids[idx + window])
+    return banned
+
+
+def _apply_token_penalties(logits: torch.Tensor, tokenizer, generated_ids: list[int]) -> torch.Tensor:
+    adjusted = logits.clone()
+    if tokenizer.eos_token_id is not None and EOS_LOGIT_DIVISOR > 1.0:
+        adjusted[:, tokenizer.eos_token_id] = adjusted[:, tokenizer.eos_token_id] / EOS_LOGIT_DIVISOR
+    for token_id, divisor in TOKEN_LOGIT_DIVISORS.items():
+        if divisor > 1.0 and 0 <= token_id < adjusted.shape[-1]:
+            adjusted[:, token_id] = adjusted[:, token_id] / divisor
+    adjusted = _apply_repetition_penalty(adjusted, generated_ids)
+    banned_tokens = _get_banned_ngram_tokens(generated_ids)
+    for token_id in banned_tokens:
+        if 0 <= token_id < adjusted.shape[-1]:
+            adjusted[:, token_id] = float("-inf")
     return adjusted
 
 
