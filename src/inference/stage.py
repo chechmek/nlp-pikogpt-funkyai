@@ -16,14 +16,36 @@ from src.training.stage import CausalTransformerLM, resolve_device, set_seed
 
 EOS_LOGIT_DIVISOR = 1.5
 TOKEN_LOGIT_DIVISORS: dict[int, float] = {
-    # 32: 0.5,
-    # 33: 0.5,
-    # 34: 0.5,
-    # 35: 0.5,
-    # 36: 0.5,
+    # GPT-2 tokenizer single-letter ids: B=33, C=34, ..., Z=57. A is 32 and left unpenalized.
+    32: 2,
+    33: 1.3,
+    34: 1.3,
+    35: 1.3,
+    36: 1.3,
+    37: 1.3,
+    38: 1.3,
+    39: 1.3,
+    40: 1.3,
+    41: 1.3,
+    42: 1.3,
+    43: 1.3,
+    44: 1.3,
+    45: 1.3,
+    46: 1.3,
+    47: 1.3,
+    48: 1.3,
+    49: 1.3,
+    50: 1.3,
+    51: 1.3,
+    52: 1.3,
+    53: 1.3,
+    54: 1.3,
+    55: 1.3,
+    56: 1.3,
+    57: 1.3,
     447: 1,
 }
-REPETITION_PENALTY = 2
+REPETITION_PENALTY = 0.5
 NO_REPEAT_NGRAM_SIZE = 4
 
 
