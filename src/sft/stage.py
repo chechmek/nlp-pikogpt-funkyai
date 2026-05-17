@@ -115,7 +115,11 @@ class AlpacaSFTDataset(TorchDataset):
         skipped = 0
 
         for item in data:
-            prompt = _format_prompt(str(item["instruction"]), str(item.get("input", "")))
+            raw_prompt = str(item.get("prompt", "")).strip()
+            if raw_prompt:
+                prompt = raw_prompt
+            else:
+                prompt = _format_prompt(str(item["instruction"]), str(item.get("input", "")))
             response = str(item["output"])
 
             prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
