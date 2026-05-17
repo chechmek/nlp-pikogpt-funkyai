@@ -1,0 +1,56 @@
+# PikoGPT Large - CPU Activation Experiment Configuration
+# =========================================================
+# Same architecture as train_large.toml (~37M params), but sized for CPU
+# so that the 4 activation variants (gelu/relu/silu/tanh) can be compared
+# in a few hours rather than weeks. Edit `activation` and `experiment.name`
+# between runs.
+
+[experiment]
+name = "pikogpt_large_cpu_gelu"   # Change per run: _gelu, _relu, _silu, _tanh
+description = "CPU activation experiment: 384 embd, 10 layers, 6 heads, ctx 256"
+seed = 42
+
+[data]
+input_dataset_path = "data/processed/openwebtext_clean"
+validation_split = 0.1
+split_seed = 42
+max_train_samples = 20000          # Tokenize a small slice; full 2M is unusable on CPU
+max_validation_samples = 1000
+
+[tokenizer]
+name = "gpt2"
+context_length = 256               # Reduced from 1024 — attention is O(ctx^2)
+append_eos_token = true
+
+[model]
+n_embd = 384                       # Same as train_large for transferability
+n_layer = 10                       # Same as train_large
+n_head = 6                         # Same as train_large (head_dim = 64)
+dropout = 0.1
+layer_norm_epsilon = 1e-5
+activation = "gelu"                # Change per run: "gelu" | "relu" | "silu" | "tanh"
+
+[training]
+device = "cpu"
+batch_size = 4                     # CPU-friendly
+eval_batch_size = 4
+grad_accum_steps = 1
+learning_rate = 4e-4               # Same peak LR as train_large
+min_learning_rate = 4e-5
+weight_decay = 0.01
+num_epochs = 1
+max_train_steps = 1000             # Enough to see relative activation ranking
+warmup_steps = 100                 # Scaled down proportionally (10% of total)
+compile_model = false              # torch.compile hurts on CPU at this size
+compile_backend = "auto"
+compile_mode = "default"
+save_every_steps = 1000            # Only save final
+log_every_steps = 50
+eval_every_steps = 200             # See eval signal early
+gradient_clip_norm = 1.0
+
+[logging]
+base_dir = "runs"
+level = "INFO"
+train_jsonl_name = "train_metrics.jsonl"
+eval_jsonl_name = "eval_metrics.jsonl"
