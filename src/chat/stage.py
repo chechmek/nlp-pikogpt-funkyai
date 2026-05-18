@@ -88,6 +88,8 @@ class ChatSession:
         user_message: str,
         max_tokens: int,
         temperature: float,
+        top_k: int = 0,
+        top_p: float = 1.0,
     ) -> tuple[list[dict[str, str]], str]:
         if not user_message.strip():
             return history, "Enter a message."
@@ -104,6 +106,8 @@ class ChatSession:
             max_tokens=max_tokens,
             temperature=temperature,
             device=self.device,
+            top_k=int(top_k),
+            top_p=float(top_p),
         )
         reply = outputs["generated_text"].strip()
         if not reply:
@@ -164,8 +168,23 @@ def _build_demo(
                 minimum=0.0,
                 maximum=1.5,
                 value=temperature,
-                step=0.1,
+                step=0.05,
                 label="Temperature",
+            )
+        with gr.Row():
+            top_k_slider = gr.Slider(
+                minimum=0,
+                maximum=200,
+                value=0,
+                step=1,
+                label="Top-K (0 = disabled)",
+            )
+            top_p_slider = gr.Slider(
+                minimum=0.0,
+                maximum=1.0,
+                value=1.0,
+                step=0.05,
+                label="Top-P (1.0 = disabled)",
             )
 
         with gr.Row():
@@ -180,6 +199,8 @@ def _build_demo(
             message: str,
             max_tokens_value: int,
             temperature_value: float,
+            top_k_value: int,
+            top_p_value: float,
         ):
             updated_history, status = session.generate_reply(
                 checkpoint_path=checkpoint_value,
@@ -187,6 +208,8 @@ def _build_demo(
                 user_message=message,
                 max_tokens=int(max_tokens_value),
                 temperature=float(temperature_value),
+                top_k=int(top_k_value),
+                top_p=float(top_p_value),
             )
             return (
                 _to_chatbot_messages(updated_history),
@@ -213,6 +236,8 @@ def _build_demo(
                 user_input,
                 max_tokens_slider,
                 temperature_slider,
+                top_k_slider,
+                top_p_slider,
             ],
             outputs=[chatbot, history_state, user_input, status_box],
         )
@@ -224,6 +249,8 @@ def _build_demo(
                 user_input,
                 max_tokens_slider,
                 temperature_slider,
+                top_k_slider,
+                top_p_slider,
             ],
             outputs=[chatbot, history_state, user_input, status_box],
         )

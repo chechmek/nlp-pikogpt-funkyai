@@ -118,6 +118,25 @@ def _load_tokenizer(tokenizer_name: str, quiet: bool = False):
         return AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
 
 
+def _apply_top_k(logits: torch.Tensor, top_k: int) -> torch.Tensor:
+    if top_k <= 0:
+        return logits
+    top_k = min(top_k, logits.size(-1))
+    threshold = torch.topk(logits, top_k).values[..., -1, None]
+    return logits.masked_fill(logits < threshold, float("-inf"))
+
+
+def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+    if top_p >= 1.0:
+        return logits
+    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+    cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+    # Shift right so the token that pushes over the threshold is kept
+    sorted_indices_to_remove = (cumulative_probs - torch.softmax(sorted_logits, dim=-1)) >= top_p
+    sorted_logits[sorted_indices_to_remove] = float("-inf")
+    return logits.scatter(-1, sorted_indices, sorted_logits)
+
+
 def _generate(
     model: CausalTransformerLM,
     tokenizer,
@@ -125,6 +144,8 @@ def _generate(
     max_tokens: int,
     temperature: float,
     device: torch.device,
+    top_k: int = 0,
+    top_p: float = 1.0,
 ) -> dict[str, Any]:
     encoded = tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
     input_ids = encoded["input_ids"].to(device)
@@ -148,6 +169,8 @@ def _generate(
                 next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
             else:
                 scaled_logits = next_token_logits / temperature
+                scaled_logits = _apply_top_k(scaled_logits, top_k)
+                scaled_logits = _apply_top_p(scaled_logits, top_p)
                 probs = torch.softmax(scaled_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
 
