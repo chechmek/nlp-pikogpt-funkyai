@@ -112,6 +112,9 @@ class ChatSession:
             top_p=float(top_p),
         )
         reply = outputs["generated_text"].strip()
+        last_punct = max(reply.rfind("."), reply.rfind("!"), reply.rfind("?"))
+        if last_punct != -1:
+            reply = reply[: last_punct + 1]
         if not reply:
             reply = "[empty response]"
 
