@@ -42,12 +42,8 @@ def _format_prompt(history: list[dict[str, str]], user_message: str) -> str:
     return "\n".join(lines)
 
 
-def _to_chatbot_messages(history: list[dict[str, str]]) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
-    for turn in history:
-        messages.append({"role": "user", "content": turn["user"]})
-        messages.append({"role": "assistant", "content": turn["assistant"]})
-    return messages
+def _to_chatbot_messages(history: list[dict[str, str]]) -> list[list[str]]:
+    return [[turn["user"], turn["assistant"]] for turn in history]
 
 
 class ChatSession:
