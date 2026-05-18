@@ -12,7 +12,7 @@ from src.inference.stage import _build_model, _generate, _load_checkpoint_payloa
 from src.training.stage import resolve_device, set_seed
 
 
-SYSTEM_PROMPT = "Question: {question}\nAnswer:"
+MAX_HISTORY_TURNS = 4
 
 
 LOGGER = logging.getLogger("pikogpt.chat")
@@ -23,20 +23,40 @@ def _discover_checkpoints(checkpoint_dir: str | Path) -> list[str]:
     if not root.exists():
         return []
 
-    checkpoints = sorted(root.glob("*/artifacts/model_final.pt"))
-    return [str(path) for path in checkpoints]
+    candidates: set[Path] = set(root.rglob("artifacts/model_final*.pt"))
+
+    if root.is_file() and root.name.startswith("model_final") and root.suffix == ".pt":
+        candidates.add(root)
+    elif root.is_dir():
+        if root.name == "artifacts":
+            candidates.update(root.glob("model_final*.pt"))
+        artifacts_dir = root / "artifacts"
+        if artifacts_dir.is_dir():
+            candidates.update(artifacts_dir.glob("model_final*.pt"))
+
+    return [str(path) for path in sorted(candidates)]
 
 
-def _format_prompt(user_message: str) -> str:
-    return SYSTEM_PROMPT.format(question=user_message.strip())
+_ALPACA_HEADER = (
+    "Below is an instruction that describes a task. "
+    "Write a response that appropriately completes the request.\n\n"
+)
 
 
-def _to_chatbot_messages(history: list[dict[str, str]]) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
-    for turn in history:
-        messages.append({"role": "user", "content": turn["user"]})
-        messages.append({"role": "assistant", "content": turn["assistant"]})
-    return messages
+def _format_prompt(history: list[dict[str, str]], user_message: str) -> str:
+    parts: list[str] = [_ALPACA_HEADER]
+    for turn in history[-MAX_HISTORY_TURNS:]:
+        reply = turn["assistant"].strip()
+        if not reply or reply == "[empty response]" or not reply[-1] in ".!?":
+            continue
+        parts.append(f"### Instruction:\n{turn['user'].strip()}\n\n")
+        parts.append(f"### Response:\n{reply}\n\n")
+    parts.append(f"### Instruction:\n{user_message.strip()}\n\n### Response:\n")
+    return "".join(parts)
+
+
+def _to_chatbot_messages(history: list[dict[str, str]]) -> list[list[str]]:
+    return [[turn["user"], turn["assistant"]] for turn in history]
 
 
 class ChatSession:
@@ -81,14 +101,15 @@ class ChatSession:
         user_message: str,
         max_tokens: int,
         temperature: float,
+        top_k: int = 0,
+        top_p: float = 1.0,
     ) -> tuple[list[dict[str, str]], str]:
         if not user_message.strip():
             return history, "Enter a message."
 
         status = self.load_checkpoint(checkpoint_path)
-        set_seed(self.seed)
 
-        prompt = _format_prompt(user_message)
+        prompt = _format_prompt(history, user_message)
         self.logger.info("Prompt sent to model:\n%s", prompt)
         outputs = _generate(
             model=self.model,
@@ -97,8 +118,13 @@ class ChatSession:
             max_tokens=max_tokens,
             temperature=temperature,
             device=self.device,
+            top_k=int(top_k),
+            top_p=float(top_p),
         )
         reply = outputs["generated_text"].strip()
+        last_punct = max(reply.rfind("."), reply.rfind("!"), reply.rfind("?"))
+        if last_punct != -1:
+            reply = reply[: last_punct + 1]
         if not reply:
             reply = "[empty response]"
 
@@ -118,7 +144,7 @@ def _build_demo(
     initial_checkpoint = str(checkpoint_path) if checkpoint_path else (discovered[0] if discovered else None)
     if initial_checkpoint is None:
         raise ValueError(
-            "No checkpoints found. Pass --checkpoint or place model_final.pt files under --checkpoint-dir."
+            "No checkpoints found. Pass --checkpoint or place model_final*.pt files under --checkpoint-dir."
         )
 
     choices = [initial_checkpoint] + [path for path in discovered if path != initial_checkpoint]
@@ -157,8 +183,23 @@ def _build_demo(
                 minimum=0.0,
                 maximum=1.5,
                 value=temperature,
-                step=0.1,
+                step=0.05,
                 label="Temperature",
+            )
+        with gr.Row():
+            top_k_slider = gr.Slider(
+                minimum=0,
+                maximum=200,
+                value=0,
+                step=1,
+                label="Top-K (0 = disabled)",
+            )
+            top_p_slider = gr.Slider(
+                minimum=0.0,
+                maximum=1.0,
+                value=1.0,
+                step=0.05,
+                label="Top-P (1.0 = disabled)",
             )
 
         with gr.Row():
@@ -173,6 +214,8 @@ def _build_demo(
             message: str,
             max_tokens_value: int,
             temperature_value: float,
+            top_k_value: int,
+            top_p_value: float,
         ):
             updated_history, status = session.generate_reply(
                 checkpoint_path=checkpoint_value,
@@ -180,6 +223,8 @@ def _build_demo(
                 user_message=message,
                 max_tokens=int(max_tokens_value),
                 temperature=float(temperature_value),
+                top_k=int(top_k_value),
+                top_p=float(top_p_value),
             )
             return (
                 _to_chatbot_messages(updated_history),
@@ -206,6 +251,8 @@ def _build_demo(
                 user_input,
                 max_tokens_slider,
                 temperature_slider,
+                top_k_slider,
+                top_p_slider,
             ],
             outputs=[chatbot, history_state, user_input, status_box],
         )
@@ -217,6 +264,8 @@ def _build_demo(
                 user_input,
                 max_tokens_slider,
                 temperature_slider,
+                top_k_slider,
+                top_p_slider,
             ],
             outputs=[chatbot, history_state, user_input, status_box],
         )
@@ -232,7 +281,7 @@ def _build_demo(
 
 def main(
     checkpoint_path: str | Path | None = None,
-    checkpoint_dir: str | Path = "runs",
+    checkpoint_dir: str | Path = ".",
     device: str = "auto",
     max_tokens: int = 100,
     temperature: float = 0.8,
