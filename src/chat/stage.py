@@ -27,19 +27,19 @@ def _discover_checkpoints(checkpoint_dir: str | Path) -> list[str]:
     return [str(path) for path in checkpoints]
 
 
+_ALPACA_HEADER = (
+    "Below is an instruction that describes a task. "
+    "Write a response that appropriately completes the request.\n\n"
+)
+
+
 def _format_prompt(history: list[dict[str, str]], user_message: str) -> str:
-    turns = history[-MAX_HISTORY_TURNS:]
-    lines: list[str] = []
-    for turn in turns:
-        user = turn["user"].strip()
-        assistant = turn["assistant"].strip()
-        if user:
-            lines.append(f"Question: {user}")
-        if assistant:
-            lines.append(f"Answer: {assistant}")
-    lines.append(f"Question: {user_message.strip()}")
-    lines.append("Answer:")
-    return "\n".join(lines)
+    parts: list[str] = [_ALPACA_HEADER]
+    for turn in history[-MAX_HISTORY_TURNS:]:
+        parts.append(f"### Instruction:\n{turn['user'].strip()}\n\n")
+        parts.append(f"### Response:\n{turn['assistant'].strip()}\n\n")
+    parts.append(f"### Instruction:\n{user_message.strip()}\n\n### Response:\n")
+    return "".join(parts)
 
 
 def _to_chatbot_messages(history: list[dict[str, str]]) -> list[list[str]]:
