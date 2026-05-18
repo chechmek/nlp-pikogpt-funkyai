@@ -137,6 +137,25 @@ def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     return logits.scatter(-1, sorted_indices, sorted_logits)
 
 
+_STOP_STRINGS = ["###", "\n\n"]
+
+
+def _get_stop_sequences(tokenizer) -> list[list[int]]:
+    seqs = []
+    for s in _STOP_STRINGS:
+        ids = tokenizer.encode(s, add_special_tokens=False)
+        if ids:
+            seqs.append(ids)
+    return seqs
+
+
+def _matches_stop(generated_ids: list[int], stop_seqs: list[list[int]]) -> list[int] | None:
+    for seq in stop_seqs:
+        if len(generated_ids) >= len(seq) and generated_ids[-len(seq):] == seq:
+            return seq
+    return None
+
+
 def _generate(
     model: CausalTransformerLM,
     tokenizer,
@@ -155,6 +174,7 @@ def _generate(
             raise ValueError("Prompt tokenized to empty input and tokenizer has no eos_token_id")
         input_ids = torch.tensor([[tokenizer.eos_token_id]], dtype=torch.long, device=device)
 
+    stop_seqs = _get_stop_sequences(tokenizer)
     generated_ids: list[int] = []
     model.eval()
 
@@ -179,6 +199,11 @@ def _generate(
 
             input_ids = torch.cat([input_ids, next_token], dim=1)
             generated_ids.append(int(next_token.item()))
+
+            matched = _matches_stop(generated_ids, stop_seqs)
+            if matched:
+                generated_ids = generated_ids[:-len(matched)]
+                break
 
     generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
     full_text = prompt + generated_text
