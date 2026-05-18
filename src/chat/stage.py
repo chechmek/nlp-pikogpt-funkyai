@@ -36,8 +36,11 @@ _ALPACA_HEADER = (
 def _format_prompt(history: list[dict[str, str]], user_message: str) -> str:
     parts: list[str] = [_ALPACA_HEADER]
     for turn in history[-MAX_HISTORY_TURNS:]:
+        reply = turn["assistant"].strip()
+        if not reply or reply == "[empty response]" or not reply[-1] in ".!?":
+            continue
         parts.append(f"### Instruction:\n{turn['user'].strip()}\n\n")
-        parts.append(f"### Response:\n{turn['assistant'].strip()}\n\n")
+        parts.append(f"### Response:\n{reply}\n\n")
     parts.append(f"### Instruction:\n{user_message.strip()}\n\n### Response:\n")
     return "".join(parts)
 
@@ -95,7 +98,6 @@ class ChatSession:
             return history, "Enter a message."
 
         status = self.load_checkpoint(checkpoint_path)
-        set_seed(self.seed)
 
         prompt = _format_prompt(history, user_message)
         self.logger.info("Prompt sent to model:\n%s", prompt)
