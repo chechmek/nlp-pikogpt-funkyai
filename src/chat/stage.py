@@ -23,8 +23,18 @@ def _discover_checkpoints(checkpoint_dir: str | Path) -> list[str]:
     if not root.exists():
         return []
 
-    checkpoints = sorted(root.glob("*/artifacts/model_final.pt"))
-    return [str(path) for path in checkpoints]
+    candidates: set[Path] = set(root.rglob("artifacts/model_final*.pt"))
+
+    if root.is_file() and root.name.startswith("model_final") and root.suffix == ".pt":
+        candidates.add(root)
+    elif root.is_dir():
+        if root.name == "artifacts":
+            candidates.update(root.glob("model_final*.pt"))
+        artifacts_dir = root / "artifacts"
+        if artifacts_dir.is_dir():
+            candidates.update(artifacts_dir.glob("model_final*.pt"))
+
+    return [str(path) for path in sorted(candidates)]
 
 
 _ALPACA_HEADER = (
@@ -134,7 +144,7 @@ def _build_demo(
     initial_checkpoint = str(checkpoint_path) if checkpoint_path else (discovered[0] if discovered else None)
     if initial_checkpoint is None:
         raise ValueError(
-            "No checkpoints found. Pass --checkpoint or place model_final.pt files under --checkpoint-dir."
+            "No checkpoints found. Pass --checkpoint or place model_final*.pt files under --checkpoint-dir."
         )
 
     choices = [initial_checkpoint] + [path for path in discovered if path != initial_checkpoint]
@@ -271,7 +281,7 @@ def _build_demo(
 
 def main(
     checkpoint_path: str | Path | None = None,
-    checkpoint_dir: str | Path = "runs",
+    checkpoint_dir: str | Path = ".",
     device: str = "auto",
     max_tokens: int = 100,
     temperature: float = 0.8,

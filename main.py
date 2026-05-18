@@ -232,8 +232,8 @@ def main():
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="runs",
-        help="Chat stage only: root directory scanned for model checkpoints",
+        default=".",
+        help="Chat stage only: root directory scanned recursively for artifacts/model_final*.pt checkpoints",
     )
     parser.add_argument(
         "--server-name",
