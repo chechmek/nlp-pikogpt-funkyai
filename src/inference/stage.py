@@ -137,7 +137,7 @@ def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     return logits.scatter(-1, sorted_indices, sorted_logits)
 
 
-_STOP_STRINGS = ["###", "\n\n"]
+_STOP_STRINGS = ["###", "\n\n", "\n"]
 
 
 def _get_stop_sequences(tokenizer) -> list[list[int]]:
