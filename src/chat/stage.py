@@ -59,6 +59,26 @@ def _to_chatbot_messages(history: list[dict[str, str]]) -> list[list[str]]:
     return [[turn["user"], turn["assistant"]] for turn in history]
 
 
+def _format_empty_reply_message(outputs: dict[str, Any]) -> str:
+    finish_reason = outputs.get("finish_reason")
+    token_count = len(outputs.get("generated_token_ids", []))
+    stop_sequence = outputs.get("stop_sequence_text")
+
+    if finish_reason == "eos" and token_count == 0:
+        return "[no visible reply: model emitted EOS immediately]"
+    if finish_reason == "stop_sequence":
+        if stop_sequence == "\n":
+            return "[no visible reply: model stopped on immediate newline]"
+        if stop_sequence == "\n\n":
+            return "[no visible reply: model stopped on immediate blank line]"
+        if stop_sequence:
+            return f"[no visible reply: model stopped on {stop_sequence!r}]"
+        return "[no visible reply: model hit a stop sequence immediately]"
+    if token_count == 0:
+        return "[no visible reply: model generated zero tokens]"
+    return "[no visible reply: model only generated whitespace]"
+
+
 class ChatSession:
     def __init__(self, device_name: str, seed: int, logger: logging.Logger) -> None:
         self.device_name = device_name
@@ -126,7 +146,7 @@ class ChatSession:
         if last_punct != -1:
             reply = reply[: last_punct + 1]
         if not reply:
-            reply = "[empty response]"
+            reply = _format_empty_reply_message(outputs)
 
         updated_history = history + [{"user": user_message, "assistant": reply}]
         return updated_history, status

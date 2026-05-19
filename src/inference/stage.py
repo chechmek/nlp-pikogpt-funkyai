@@ -137,7 +137,7 @@ def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
     return logits.scatter(-1, sorted_indices, sorted_logits)
 
 
-_STOP_STRINGS = ["###", "\n\n", "\n"]
+_STOP_STRINGS = []
 
 
 def _get_stop_sequences(tokenizer) -> list[list[int]]:
@@ -176,6 +176,8 @@ def _generate(
 
     stop_seqs = _get_stop_sequences(tokenizer)
     generated_ids: list[int] = []
+    finish_reason = "max_tokens"
+    stop_sequence_text = None
     model.eval()
 
     with torch.no_grad():
@@ -195,6 +197,7 @@ def _generate(
                 next_token = torch.multinomial(probs, num_samples=1)
 
             if tokenizer.eos_token_id is not None and int(next_token.item()) == tokenizer.eos_token_id:
+                finish_reason = "eos"
                 break
 
             input_ids = torch.cat([input_ids, next_token], dim=1)
@@ -203,6 +206,8 @@ def _generate(
             matched = _matches_stop(generated_ids, stop_seqs)
             if matched:
                 generated_ids = generated_ids[:-len(matched)]
+                finish_reason = "stop_sequence"
+                stop_sequence_text = tokenizer.decode(matched, skip_special_tokens=False)
                 break
 
     generated_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
@@ -211,6 +216,8 @@ def _generate(
         "generated_text": generated_text,
         "full_text": full_text,
         "generated_token_ids": generated_ids,
+        "finish_reason": finish_reason,
+        "stop_sequence_text": stop_sequence_text,
     }
 
 
