@@ -175,6 +175,7 @@ def _generate(
         input_ids = torch.tensor([[tokenizer.eos_token_id]], dtype=torch.long, device=device)
 
     stop_seqs = _get_stop_sequences(tokenizer)
+    prompt_token_ids = input_ids[0].tolist()
     generated_ids: list[int] = []
     model.eval()
 
@@ -183,7 +184,7 @@ def _generate(
             model_input = input_ids[:, -model.max_seq_len :]
             outputs = model(input_ids=model_input)
             next_token_logits = outputs["logits"][:, -1, :]
-            next_token_logits = _apply_token_penalties(next_token_logits, tokenizer, generated_ids)
+            next_token_logits = _apply_token_penalties(next_token_logits, tokenizer, prompt_token_ids + generated_ids)
 
             if temperature == 0:
                 next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
