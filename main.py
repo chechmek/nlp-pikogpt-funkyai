@@ -219,10 +219,21 @@ def main():
         help="Leaderboard mode: output only generated text",
     )
     parser.add_argument(
+        "--debug-next-token",
+        action="store_true",
+        help="Inference stage only: print first-step next-token probabilities before generating",
+    )
+    parser.add_argument(
+        "--debug-top-n",
+        type=int,
+        default=20,
+        help="Inference stage only: how many next-token candidates to print in debug mode",
+    )
+    parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="runs",
-        help="Chat stage only: root directory scanned for model checkpoints",
+        default=".",
+        help="Chat stage only: root directory scanned recursively for artifacts/model_final*.pt checkpoints",
     )
     parser.add_argument(
         "--server-name",
@@ -389,6 +400,8 @@ def run_inference(args):
         device=args.device,
         leaderboard=args.leaderboard,
         seed=args.seed,
+        debug_next_token=args.debug_next_token,
+        debug_top_n=args.debug_top_n,
     )
 
 
