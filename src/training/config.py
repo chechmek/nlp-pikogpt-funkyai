@@ -1,3 +1,14 @@
+"""
+Training configuration models for PikoGPT.
+
+All hyperparameters live in a single TrainStageConfig that is loaded from a
+TOML or YAML file. Pydantic validates types and constraints at load time so
+bad configs fail early with a clear message rather than mid-training.
+
+Typical usage:
+    config = load_train_config("configs/train_large.toml")
+    # config.model.n_embd, config.training.learning_rate, etc.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,12 +24,20 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 class ExperimentConfig(BaseModel):
+    """Metadata about a training run (name, description, RNG seed)."""
+
     name: str = "baseline_gpt"
     description: str = "Tokenization + train/eval split + model training setup"
     seed: int = 42
 
 
 class DataConfig(BaseModel):
+    """Paths and split ratios for the pre-processed OpenWebText dataset.
+
+    max_train_samples / max_validation_samples cap the dataset size without
+    re-running preprocessing; useful for quick iteration or smoke tests.
+    """
+
     input_dataset_path: str = "data/processed/openwebtext_clean"
     validation_split: float = Field(default=0.1, gt=0.0, lt=0.5)
     split_seed: int = 42
@@ -27,12 +46,26 @@ class DataConfig(BaseModel):
 
 
 class TokenizerConfig(BaseModel):
+    """Tokenizer identity and sequence packing parameters.
+
+    context_length controls the fixed sequence length used during packing —
+    every packed sequence will be exactly this many tokens. append_eos_token
+    inserts an EOS between documents so the model learns document boundaries.
+    """
+
     name: str = "gpt2"
     context_length: int = Field(default=128, ge=16)
     append_eos_token: bool = True
 
 
 class ModelConfig(BaseModel):
+    """Architecture hyperparameters for CausalTransformerLM.
+
+    vocab_size defaults to None, meaning it is inferred from the tokenizer at
+    runtime (50 257 for GPT-2).  n_embd must be divisible by n_head because
+    each attention head gets n_embd // n_head dimensions.
+    """
+
     vocab_size: int | None = Field(default=None, ge=1000)
     n_embd: int = Field(default=256, ge=64)
     n_layer: int = Field(default=4, ge=1)
@@ -51,6 +84,14 @@ class ModelConfig(BaseModel):
 
 
 class TrainingRuntimeConfig(BaseModel):
+    """Optimizer, scheduler, and runtime knobs for the training loop.
+
+    grad_accum_steps accumulates gradients over N micro-batches before each
+    optimizer step, simulating a larger effective batch without extra memory.
+    compile_model runs torch.compile for ~15–20 % throughput gain on CUDA;
+    set compile_backend to "eager" to skip compilation on CPU/MPS.
+    """
+
     device: str = "auto"
     batch_size: int = Field(default=8, ge=1)
     eval_batch_size: int = Field(default=8, ge=1)
@@ -72,6 +113,13 @@ class TrainingRuntimeConfig(BaseModel):
 
 
 class LoggingConfig(BaseModel):
+    """Output directory and JSONL filenames for training metrics.
+
+    All run artefacts (checkpoints, logs, config snapshot) are written under
+    base_dir/<run_name>/.  The JSONL files record per-step and per-epoch
+    metrics for later plotting with scripts/plot_training_metrics.py.
+    """
+
     base_dir: str = "runs"
     level: str = "INFO"
     train_jsonl_name: str = "train_metrics.jsonl"
@@ -88,6 +136,13 @@ class LoggingConfig(BaseModel):
 
 
 class TrainStageConfig(BaseModel):
+    """Root config that composes all sub-configs for a full training run.
+
+    Loaded from a TOML/YAML file via load_train_config().  Each section maps
+    to a sub-config class: [experiment], [data], [tokenizer], [model],
+    [training], [logging].
+    """
+
     experiment: ExperimentConfig = Field(default_factory=ExperimentConfig)
     data: DataConfig = Field(default_factory=DataConfig)
     tokenizer: TokenizerConfig = Field(default_factory=TokenizerConfig)
@@ -113,12 +168,18 @@ def _load_raw_config(path: Path) -> dict[str, Any]:
 
 
 def model_dump_compat(model: BaseModel) -> dict[str, Any]:
+    """Serialize a Pydantic model to a plain dict regardless of v1/v2."""
     if hasattr(model, "model_dump"):
         return model.model_dump()  # pydantic v2
     return model.dict()  # pragma: no cover - pydantic v1
 
 
 def load_train_config(config_path: str | Path) -> TrainStageConfig:
+    """Load and validate a training config from a TOML or YAML file.
+
+    Raises FileNotFoundError if the path does not exist and ValueError for
+    unsupported extensions or invalid TOML/YAML structure.
+    """
     path = Path(config_path)
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")

@@ -1,3 +1,19 @@
+"""
+Inference pipeline for PikoGPT.
+
+Loads a pikogpt_checkpoint_v2 file, reconstructs the model architecture from
+the embedded metadata, and generates text with configurable sampling.
+
+Penalty constants at the top of this module were tuned empirically to produce
+more natural-looking outputs for a small model: EOS is downweighted to
+encourage longer responses, uppercase-starting tokens are suppressed to reduce
+random capitalisation, and space tokens are mildly penalised to reduce
+excessive spacing.
+
+Usage:
+    python main.py --stage inference --checkpoint runs/<run>/artifacts/model_final.pt \\
+        --prompt "Once upon a time" --max-tokens 200 --temperature 0.8
+"""
 from __future__ import annotations
 
 import argparse
@@ -119,6 +135,12 @@ def _load_tokenizer(tokenizer_name: str, quiet: bool = False):
 
 
 def _apply_top_k(logits: torch.Tensor, top_k: int) -> torch.Tensor:
+    """Zero out all logits outside the top-k vocabulary entries.
+
+    Setting low-probability tokens to -inf before softmax concentrates the
+    distribution and prevents the model from occasionally sampling rare or
+    incoherent tokens.
+    """
     if top_k <= 0:
         return logits
     top_k = min(top_k, logits.size(-1))
@@ -127,6 +149,12 @@ def _apply_top_k(logits: torch.Tensor, top_k: int) -> torch.Tensor:
 
 
 def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+    """Nucleus sampling: keep only the smallest set of tokens whose cumulative
+    probability mass exceeds top_p, zeroing out the rest.
+
+    Unlike top-k, the number of retained tokens adapts to the sharpness of the
+    distribution — a flat distribution keeps many tokens, a peaked one keeps few.
+    """
     if top_p >= 1.0:
         return logits
     sorted_logits, sorted_indices = torch.sort(logits, descending=True)
@@ -166,6 +194,17 @@ def _generate(
     top_k: int = 0,
     top_p: float = 1.0,
 ) -> dict[str, Any]:
+    """Generate tokens autoregressively from a prompt.
+
+    Decoding pipeline per step:
+        1. Forward pass on the last max_seq_len tokens (KV-cache-free sliding window)
+        2. Apply custom token penalties (EOS downweight, uppercase suppress, etc.)
+        3. temperature == 0  →  greedy argmax
+           temperature > 0   →  sample after top-k and top-p filtering
+
+    Returns a dict with keys: generated_text, full_text, generated_token_ids,
+    finish_reason ("eos" | "max_tokens" | "stop_sequence"), stop_sequence_text.
+    """
     encoded = tokenizer(prompt, return_tensors="pt", add_special_tokens=False)
     input_ids = encoded["input_ids"].to(device)
 
@@ -230,6 +269,12 @@ def _format_token_debug_text(tokenizer, token_id: int) -> str:
 
 
 def _apply_repetition_penalty(logits: torch.Tensor, token_ids: list[int]) -> torch.Tensor:
+    """Scale down logits for tokens that already appear in the generated sequence.
+
+    Positive logits are divided by REPETITION_PENALTY (making them smaller);
+    negative logits are multiplied (making them more negative).  Both moves
+    reduce the probability of the token being chosen again.
+    """
     if REPETITION_PENALTY <= 1.0 or not token_ids:
         return logits
 
@@ -245,6 +290,12 @@ def _apply_repetition_penalty(logits: torch.Tensor, token_ids: list[int]) -> tor
 
 
 def _get_banned_ngram_tokens(token_ids: list[int]) -> set[int]:
+    """Return tokens that would extend any n-gram already present in the output.
+
+    Looks for all occurrences of the last (n-1) tokens in the history.
+    Whatever token followed each occurrence becomes banned, preventing the
+    model from repeating the same n-gram verbatim.
+    """
     if NO_REPEAT_NGRAM_SIZE <= 0 or len(token_ids) + 1 < NO_REPEAT_NGRAM_SIZE:
         return set()
     if NO_REPEAT_NGRAM_SIZE == 1:

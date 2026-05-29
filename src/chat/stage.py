@@ -1,3 +1,18 @@
+"""
+Gradio chat UI for PikoGPT.
+
+Discovers all model_final*.pt checkpoints under a directory tree and exposes
+them in a dropdown so you can compare multiple checkpoints side-by-side
+without restarting the server.
+
+Conversations use the Alpaca template (### Instruction / ### Response) and
+carry the last MAX_HISTORY_TURNS turns of context.  Only turns where the
+assistant produced a complete sentence (ending with .!?) are included in the
+context to avoid confusing the model with truncated history.
+
+Usage:
+    python main.py --stage chat --checkpoint-dir runs/
+"""
 from __future__ import annotations
 
 import html
@@ -19,6 +34,11 @@ LOGGER = logging.getLogger("pikogpt.chat")
 
 
 def _discover_checkpoints(checkpoint_dir: str | Path) -> list[str]:
+    """Recursively find all model_final*.pt files under checkpoint_dir.
+
+    Handles three input forms: a run directory (scans its artifacts/
+    subdirectory), a direct artifacts/ directory, and a single .pt file path.
+    """
     root = Path(checkpoint_dir).expanduser().resolve()
     if not root.exists():
         return []

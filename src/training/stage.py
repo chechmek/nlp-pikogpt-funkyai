@@ -1,3 +1,21 @@
+"""
+Pre-training stage for PikoGPT.
+
+Implements the full pre-training pipeline: tokenization → sequence packing →
+optimizer loop → periodic evaluation → checkpoint saving.  Supports single-GPU,
+multi-GPU (DDP via torchrun), mixed precision (AMP), gradient accumulation,
+and torch.compile.
+
+Entry point:
+    stage = TrainStage("configs/train_large.toml")
+    results = stage.run()
+
+Or via CLI:
+    python main.py --stage train --config configs/train_large.toml
+
+With torchrun (multi-GPU):
+    torchrun --nproc_per_node=8 main.py --stage train --config configs/train_large.toml
+"""
 from __future__ import annotations
 
 import argparse
@@ -155,8 +173,22 @@ def _resolve_activation(name: str) -> Any:
 
 
 class CausalTransformerLM(nn.Module):
-    """
-    Decoder-only language model implemented with nn.TransformerEncoder + causal mask.
+    """Decoder-only causal language model built on nn.TransformerEncoder.
+
+    Uses a strictly upper-triangular attention mask (all -inf above the
+    diagonal) to enforce causality without a custom attention kernel, so it
+    runs on any PyTorch backend including MPS and CPU.
+
+    Embedding weights are tied to the output projection (lm_head.weight =
+    token_embedding.weight) to halve the parameter count on the vocab
+    projection and regularise training.
+
+    Forward input:
+        input_ids: (B, T) long tensor — token indices
+        labels:    (B, T) long tensor (optional) — same as input_ids for LM
+    Forward output dict:
+        "logits": (B, T, vocab_size) float tensor
+        "loss":   scalar cross-entropy loss (None when labels is not provided)
     """
 
     def __init__(
@@ -246,6 +278,22 @@ class CausalTransformerLM(nn.Module):
 
 
 class TrainStage:
+    """Orchestrates the full pre-training pipeline from raw dataset to final checkpoint.
+
+    Lifecycle (via run()):
+        1. _initialize()          — load config, create run directory tree, set seed
+        2. _prepare_datasets()    — tokenize + pack (rank-0 only, then barrier)
+        3. _build_model()         — construct CausalTransformerLM
+        4. _train_model()         — optimizer loop with AMP, DDP, gradient accumulation
+        5. _evaluate_wikitext()   — external benchmark (WikiText-103)
+        6. _evaluate_openwebtext_test() — course leaderboard evaluation
+        7. _save_checkpoint()     — write model_final.pt
+
+    DDP: launch with ``torchrun --nproc_per_node=N``.  Rank-0 handles all I/O
+    (logging, checkpointing, JSONL writes).  Other ranks skip I/O but still
+    participate in forward/backward and gradient all-reduce.
+    """
+
     def __init__(
         self,
         config_path: str | Path,
@@ -273,6 +321,12 @@ class TrainStage:
         self.eval_jsonl: JsonlWriter | None = None
 
     def run(self) -> dict[str, Any]:
+        """Execute the full training pipeline and return a results summary dict.
+
+        When prepare_only=True the method returns after tokenization without
+        running the optimizer loop — useful for pre-warming dataset caches on
+        a cluster before a multi-GPU training job.
+        """
         started_at = time.time()
         self._initialize()
 
@@ -492,6 +546,14 @@ class TrainStage:
         return tokenizer
 
     def _tokenize_and_pack(self, text_dataset: Dataset, tokenizer, split_name: str) -> Dataset:
+        """Tokenize documents and pack tokens into fixed-length context windows.
+
+        Documents are concatenated into a single token stream (with an
+        optional EOS separator between them) and then sliced into non-
+        overlapping blocks of context_length tokens.  Trailing tokens that do
+        not fill a complete block are discarded.  The resulting dataset has
+        columns "input_ids" and "labels" (identical, for causal LM training).
+        """
         self.logger.info("Tokenizing %s split (%s docs)", split_name, f"{len(text_dataset):,}")
 
         def tokenize_batch(batch: dict[str, list[str]]) -> dict[str, list[list[int]]]:
@@ -554,6 +616,13 @@ class TrainStage:
         return self.artifacts_dir / "train_tokenized", self.artifacts_dir / "validation_tokenized"
 
     def _prepare_datasets(self):
+        """Load and tokenize datasets, caching results to disk.
+
+        In DDP mode only rank-0 runs the tokenization; all other ranks wait at
+        a barrier and then load the cached dataset from disk.  Caching avoids
+        re-tokenizing on every run and prevents OOM on large datasets when
+        every rank would otherwise tokenize independently.
+        """
         train_path, eval_path = self._tokenized_dataset_paths()
         datasets_exist = train_path.exists() and eval_path.exists()
 
@@ -810,6 +879,15 @@ class TrainStage:
         eval_dataset: Dataset,
         checkpoint_payload: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        """Run the AdamW optimizer loop with AMP, DDP, and gradient accumulation.
+
+        Uses model.no_sync() on non-sync micro-steps to defer the DDP
+        all-reduce until the gradient accumulation boundary, which cuts
+        inter-GPU communication by a factor of grad_accum_steps.
+
+        Returns a dict with final loss, perplexity, and per-epoch metrics that
+        is later merged into the checkpoint payload.
+        """
         device, ddp_kwargs = self._resolve_training_device()
         base_model.to(device)
 

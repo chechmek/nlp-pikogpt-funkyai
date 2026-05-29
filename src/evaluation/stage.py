@@ -1,3 +1,16 @@
+"""
+Standalone evaluation stage for PikoGPT.
+
+Computes perplexity on two benchmarks after training is complete:
+  - WikiText-103 (public benchmark, downloaded from HuggingFace)
+  - OpenWebText test split (course leaderboard dataset)
+
+Packed sequences are cached to disk so repeated evaluations (e.g. comparing
+multiple checkpoints) only tokenize once.
+
+Usage:
+    python main.py --stage evaluate --checkpoint runs/<run>/artifacts/model_final.pt
+"""
 from __future__ import annotations
 
 import json
@@ -53,6 +66,11 @@ def _evaluate_packed_sequences(
     eval_batch_size: int,
     device: torch.device,
 ) -> float | None:
+    """Compute average cross-entropy loss over a list of fixed-length sequences.
+
+    Returns None (rather than raising) when the sequence list is empty so
+    callers can gracefully report missing benchmarks.
+    """
     if not sequences:
         return None
 
